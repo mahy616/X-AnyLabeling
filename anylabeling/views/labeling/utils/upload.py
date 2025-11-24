@@ -1796,3 +1796,236 @@ def upload_image_flags_file(self):
             icon=new_icon_path("error", "svg"),
         )
         popup.show_popup(self, position="center")
+
+
+def upload_visionmaster_annotation(self, LABEL_OPACITY):
+    """Upload VisionMaster XML annotations."""
+    if not _check_filename_exist(self):
+        return
+
+    dialog = QtWidgets.QDialog(self)
+    dialog.setWindowTitle(self.tr("Upload Options"))
+    dialog.setMinimumWidth(500)
+    dialog.setStyleSheet(get_export_option_style())
+
+    layout = QVBoxLayout()
+    layout.setContentsMargins(24, 24, 24, 24)
+    layout.setSpacing(16)
+
+    path_layout = QVBoxLayout()
+    path_label = QtWidgets.QLabel(self.tr("Select Upload Folder"))
+    path_layout.addWidget(path_label)
+
+    path_input_layout = QHBoxLayout()
+    path_input_layout.setSpacing(8)
+
+    path_edit = QtWidgets.QLineEdit()
+    path_edit.setText(osp.dirname(osp.dirname(self.filename)))
+
+    def browse_upload_folder():
+        path = QtWidgets.QFileDialog.getExistingDirectory(
+            self,
+            self.tr("Select Upload Folder"),
+            path_edit.text(),
+            QtWidgets.QFileDialog.ShowDirsOnly
+            | QtWidgets.QFileDialog.DontResolveSymlinks
+            | QtWidgets.QFileDialog.DontUseNativeDialog,
+        )
+        if path:
+            path_edit.setText(path)
+
+    path_button = QtWidgets.QPushButton(self.tr("Browse"))
+    path_button.clicked.connect(browse_upload_folder)
+    path_button.setStyleSheet(get_cancel_btn_style())
+
+    path_input_layout.addWidget(path_edit)
+    path_input_layout.addWidget(path_button)
+    path_layout.addLayout(path_input_layout)
+    layout.addLayout(path_layout)
+
+    button_layout = QHBoxLayout()
+    button_layout.setContentsMargins(0, 16, 0, 0)
+    button_layout.setSpacing(8)
+
+    cancel_button = QtWidgets.QPushButton(self.tr("Cancel"))
+    cancel_button.clicked.connect(dialog.reject)
+    cancel_button.setStyleSheet(get_cancel_btn_style())
+
+    ok_button = QtWidgets.QPushButton(self.tr("OK"))
+    ok_button.clicked.connect(dialog.accept)
+    ok_button.setStyleSheet(get_ok_btn_style())
+
+    button_layout.addStretch()
+    button_layout.addWidget(cancel_button)
+    button_layout.addWidget(ok_button)
+    layout.addLayout(button_layout)
+
+    dialog.setLayout(layout)
+    result = dialog.exec_()
+
+    if not result:
+        return
+
+    label_dir_path = path_edit.text()
+    image_dir_path = osp.dirname(self.filename)
+    label_file_list = os.listdir(label_dir_path)
+    output_dir_path = self.output_dir if self.output_dir else image_dir_path
+    converter = LabelConverter()
+
+    response = QtWidgets.QMessageBox()
+    response.setIcon(QtWidgets.QMessageBox.Warning)
+    response.setWindowTitle(self.tr("Warning"))
+    response.setText(self.tr("Current annotation will be lost"))
+    response.setInformativeText(
+        self.tr(
+            "You are going to upload new annotations to this task. Continue?"
+        )
+    )
+    response.setStandardButtons(
+        QtWidgets.QMessageBox.Cancel | QtWidgets.QMessageBox.Ok
+    )
+    response.setStyleSheet(get_msg_box_style())
+
+    if response.exec_() != QtWidgets.QMessageBox.Ok:
+        return
+
+    image_list = self.image_list if self.image_list else [self.filename]
+    progress_dialog = QProgressDialog(
+        self.tr("Uploading..."), self.tr("Cancel"), 0, len(image_list), self
+    )
+    progress_dialog.setWindowModality(Qt.WindowModal)
+    progress_dialog.setWindowTitle(self.tr("Progress"))
+    progress_dialog.setMinimumWidth(500)
+    progress_dialog.setMinimumHeight(150)
+    progress_dialog.setStyleSheet(
+        get_progress_dialog_style(color="#1d1d1f", height=20)
+    )
+
+    try:
+        success_count = 0
+        skip_count = 0
+        error_files = []
+        all_labels = set()
+
+        for i, image_path in enumerate(image_list):
+            image_filename = osp.basename(image_path)
+            label_filename = osp.splitext(image_filename)[0] + ".xml"
+
+            if label_filename not in label_file_list:
+                skip_count += 1
+                continue
+
+            input_file = osp.join(label_dir_path, label_filename)
+            output_file = osp.join(
+                output_dir_path, osp.splitext(image_filename)[0] + ".json"
+            )
+
+            # Check if XML file is valid
+            if not osp.exists(input_file):
+                skip_count += 1
+                continue
+
+            # Check file size
+            if osp.getsize(input_file) == 0:
+                error_files.append(f"{label_filename} (empty file)")
+                skip_count += 1
+                continue
+
+            try:
+                converter.visionmaster_to_custom(
+                    input_file=input_file,
+                    output_file=output_file,
+                    image_file=image_path,
+                )
+                success_count += 1
+
+                # Collect labels from converted file
+                try:
+                    with open(output_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        for shape in data.get('shapes', []):
+                            label = shape.get('label')
+                            if label:
+                                all_labels.add(label)
+                except Exception:
+                    pass
+
+            except Exception as file_error:
+                error_files.append(f"{label_filename} ({str(file_error)[:50]})")
+                logger.warning(f"Failed to convert {label_filename}: {file_error}")
+
+            progress_dialog.setValue(i + 1)
+            if progress_dialog.wasCanceled():
+                break
+
+        progress_dialog.close()
+
+        # Show results
+        if success_count > 0:
+            if error_files:
+                message_text = self.tr(
+                    f"Uploaded {success_count} annotations successfully.\n"
+                    f"Skipped: {skip_count + len(error_files)}\n"
+                    f"Failed files: {', '.join(error_files[:3])}"
+                    + ("..." if len(error_files) > 3 else "")
+                )
+                icon = new_icon_path("warning", "svg")
+            else:
+                template = self.tr(
+                    "Uploading annotations successfully!\n"
+                    "Uploaded: %d files\n"
+                    "Results have been saved to:\n"
+                    "%s"
+                )
+                message_text = template % (success_count, output_dir_path)
+                icon = new_icon_path("copy-green", "svg")
+
+            popup = Popup(message_text, self, icon=icon)
+            popup.show_popup(self, popup_height=85, position="center")
+
+            # Update unique_label_list with collected labels
+            for label in all_labels:
+                if not self.unique_label_list.find_items_by_label(label):
+                    item = self.unique_label_list.create_item_from_label(label)
+                    self.unique_label_list.addItem(item)
+                    rgb = self._get_rgb_by_label(label)
+                    self.unique_label_list.set_item_label(
+                        item, label, rgb, LABEL_OPACITY
+                    )
+
+            self.load_file(self.filename)
+
+            # Refresh file list checkmarks to show annotated/unannotated status
+            for i in range(self.file_list_widget.count()):
+                item = self.file_list_widget.item(i)
+                image_filename = item.text()
+                label_file = osp.splitext(image_filename)[0] + ".json"
+                if self.output_dir:
+                    label_file_without_path = osp.basename(label_file)
+                    label_file = osp.join(self.output_dir, label_file_without_path)
+
+                if osp.exists(label_file):
+                    item.setCheckState(Qt.Checked)
+                else:
+                    item.setCheckState(Qt.Unchecked)
+        else:
+            message = self.tr(
+                "No valid VisionMaster annotations found.\n"
+                "Please check:\n"
+                "1. XML files are in correct VisionMaster format\n"
+                "2. XML file names match image file names"
+            )
+            popup = Popup(message, self, icon=new_icon_path("warning", "svg"))
+            popup.show_popup(self, popup_height=100, position="center")
+
+    except Exception as e:
+        progress_dialog.close()
+        message = f"Error occurred while uploading annotations:\n{str(e)}\n\nPlease check the XML file format."
+        logger.error(message)
+
+        popup = Popup(
+            message,
+            self,
+            icon=new_icon_path("error", "svg"),
+        )
+        popup.show_popup(self, position="center")
