@@ -1620,3 +1620,207 @@ def export_vlm_r1_ovd_annotation(self):
             icon=new_icon_path("error", "svg"),
         )
         popup.show_popup(self, position="center")
+
+
+def export_visionmaster_annotation(self):
+    """Export annotations to VisionMaster XML format."""
+    if not _check_filename_exist(self):
+        return
+
+    dialog = QtWidgets.QDialog(self)
+    dialog.setWindowTitle(self.tr("Export options"))
+    dialog.setMinimumWidth(500)
+    dialog.setStyleSheet(get_export_option_style())
+
+    layout = QVBoxLayout()
+    layout.setContentsMargins(24, 24, 24, 24)
+    layout.setSpacing(16)
+
+    path_layout = QVBoxLayout()
+    path_label = QtWidgets.QLabel(self.tr("Export path"))
+    path_layout.addWidget(path_label)
+
+    path_input_layout = QHBoxLayout()
+    path_input_layout.setSpacing(8)
+
+    path_edit = QtWidgets.QLineEdit()
+    path_edit.setText(
+        osp.realpath(osp.join(osp.dirname(self.filename), "..", "visionmaster_export"))
+    )
+    path_edit.setPlaceholderText(self.tr("Select Export Directory"))
+
+    def browse_export_path():
+        path = QtWidgets.QFileDialog.getExistingDirectory(
+            self,
+            self.tr("Select Export Directory"),
+            path_edit.text(),
+            QtWidgets.QFileDialog.DontUseNativeDialog,
+        )
+        if path:
+            path_edit.setText(path)
+
+    path_button = QtWidgets.QPushButton(self.tr("Browse"))
+    path_button.clicked.connect(browse_export_path)
+    path_button.setStyleSheet(get_cancel_btn_style())
+
+    path_input_layout.addWidget(path_edit)
+    path_input_layout.addWidget(path_button)
+    path_layout.addLayout(path_input_layout)
+    layout.addLayout(path_layout)
+
+    button_layout = QHBoxLayout()
+    button_layout.setContentsMargins(0, 16, 0, 0)
+    button_layout.setSpacing(8)
+
+    cancel_button = QtWidgets.QPushButton(self.tr("Cancel"))
+    cancel_button.clicked.connect(dialog.reject)
+    cancel_button.setStyleSheet(get_cancel_btn_style())
+
+    ok_button = QtWidgets.QPushButton(self.tr("OK"))
+    ok_button.clicked.connect(dialog.accept)
+    ok_button.setStyleSheet(get_ok_btn_style())
+
+    button_layout.addStretch()
+    button_layout.addWidget(cancel_button)
+    button_layout.addWidget(ok_button)
+    layout.addLayout(button_layout)
+
+    dialog.setLayout(layout)
+    result = dialog.exec_()
+
+    if not result:
+        return
+
+    save_path = path_edit.text()
+
+    if osp.exists(save_path):
+        msg_box = QtWidgets.QMessageBox(self)
+        msg_box.setIcon(QtWidgets.QMessageBox.Warning)
+        msg_box.setWindowTitle(self.tr("Output Directory Exists!"))
+        msg_box.setText(self.tr("Directory already exists. Choose an action:"))
+        msg_box.setInformativeText(
+            self.tr(
+                "• Yes    - Merge with existing files\n"
+                "• No     - Delete existing directory\n"
+                "• Cancel - Abort export"
+            )
+        )
+
+        msg_box.addButton(self.tr("Yes"), QtWidgets.QMessageBox.YesRole)
+        no_button = msg_box.addButton(
+            self.tr("No"), QtWidgets.QMessageBox.NoRole
+        )
+        cancel_button = msg_box.addButton(
+            self.tr("Cancel"), QtWidgets.QMessageBox.RejectRole
+        )
+        msg_box.setStyleSheet(get_msg_box_style())
+        msg_box.exec_()
+
+        clicked_button = msg_box.clickedButton()
+        if clicked_button == no_button:
+            shutil.rmtree(save_path)
+            os.makedirs(save_path)
+        elif clicked_button == cancel_button:
+            return
+    else:
+        os.makedirs(save_path)
+
+    converter = LabelConverter()
+
+    image_list = self.image_list if self.image_list else [self.filename]
+    label_dir_path = osp.dirname(self.filename)
+    if self.output_dir:
+        label_dir_path = self.output_dir
+
+    progress_dialog = QProgressDialog(
+        self.tr("Exporting..."), self.tr("Cancel"), 0, len(image_list), self
+    )
+    progress_dialog.setWindowModality(Qt.WindowModal)
+    progress_dialog.setWindowTitle(self.tr("Progress"))
+    progress_dialog.setMinimumWidth(500)
+    progress_dialog.setMinimumHeight(150)
+    progress_dialog.setStyleSheet(
+        get_progress_dialog_style(color="#1d1d1f", height=20)
+    )
+
+    try:
+        success_count = 0
+        skip_count = 0
+        all_labels = set()
+        mark_entries = []
+
+        for i, image_file in enumerate(image_list):
+            image_file_name = osp.basename(image_file)
+            base_name = osp.splitext(image_file_name)[0]
+            label_file_name = base_name + ".json"
+
+            src_label_file = osp.join(label_dir_path, label_file_name)
+            dst_xml_file = osp.join(save_path, base_name + ".xml")
+
+            # Copy original image
+            if osp.exists(image_file):
+                dst_image = osp.join(save_path, image_file_name)
+                shutil.copy2(image_file, dst_image)
+
+            if not osp.exists(src_label_file):
+                skip_count += 1
+                mark_entries.append(f"{image_file_name} good\n")
+            else:
+                # Export XML annotation
+                converter.custom_to_visionmaster(src_label_file, dst_xml_file)
+
+                # Collect labels for label_color.txt
+                with open(src_label_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    for shape in data.get('shapes', []):
+                        label = shape.get('label')
+                        if label:
+                            all_labels.add(label)
+
+                mark_entries.append(f"{image_file_name} {image_file_name}\n")
+                success_count += 1
+
+            progress_dialog.setValue(i + 1)
+            if progress_dialog.wasCanceled():
+                break
+
+        # Write label_color.txt
+        if all_labels:
+            label_color_file = osp.join(save_path, "label_color.txt")
+            with open(label_color_file, 'w', encoding='utf-8') as f:
+                for idx, label in enumerate(sorted(all_labels), start=1):
+                    f.write(f"{idx} {label}\n")
+
+        # Write mark.txt
+        if mark_entries:
+            mark_file = osp.join(save_path, "mark.txt")
+            with open(mark_file, 'w', encoding='utf-8') as f:
+                f.writelines(mark_entries)
+
+        progress_dialog.close()
+        template = self.tr(
+            "Exporting VisionMaster dataset successfully!\n"
+            "Exported: %d annotations\n"
+            "Skipped: %d files (no annotation)\n"
+            "Labels: %d\n"
+            "Results have been saved to:\n"
+            "%s"
+        )
+        message_text = template % (success_count, skip_count, len(all_labels), save_path)
+        popup = Popup(
+            message_text,
+            self,
+            icon=new_icon_path("copy-green", "svg"),
+        )
+        popup.show_popup(self, popup_height=100, position="center")
+
+    except Exception as e:
+        message = f"Error occurred while exporting annotations: {str(e)}"
+        progress_dialog.close()
+        logger.error(message)
+        popup = Popup(
+            message,
+            self,
+            icon=new_icon_path("error", "svg"),
+        )
+        popup.show_popup(self, position="center")

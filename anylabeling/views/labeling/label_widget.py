@@ -1244,6 +1244,13 @@ class LabelingWidget(LabelDialog):
             icon="format_vlm_r1_ovd",
             tip=self.tr("Upload Custom VLM-R1 OVD Annotations"),
         )
+        upload_visionmaster_annotation = action(
+            self.tr("Upload VisionMaster Annotations"),
+            lambda: utils.upload_visionmaster_annotation(self, LABEL_OPACITY),
+            None,
+            icon="format_voc",
+            tip=self.tr("Upload Custom VisionMaster Annotations"),
+        )
 
         # Export
         export_yolo_hbb_annotation = action(
@@ -1376,6 +1383,13 @@ class LabelingWidget(LabelDialog):
             None,
             icon="format_vlm_r1_ovd",
             tip=self.tr("Export Custom VLM-R1 OVD Annotations"),
+        )
+        export_visionmaster_annotation = action(
+            self.tr("Export VisionMaster Annotations"),
+            lambda: utils.export_visionmaster_annotation(self),
+            None,
+            icon="format_visionmaster",
+            tip=self.tr("Export Custom VisionMaster Annotations"),
         )
 
         # Group zoom controls into a list for easier toggling.
@@ -1511,6 +1525,7 @@ class LabelingWidget(LabelDialog):
             upload_ppocr_rec_annotation=upload_ppocr_rec_annotation,
             upload_ppocr_kie_annotation=upload_ppocr_kie_annotation,
             upload_vlm_r1_ovd_annotation=upload_vlm_r1_ovd_annotation,
+            upload_visionmaster_annotation=upload_visionmaster_annotation,
             export_yolo_hbb_annotation=export_yolo_hbb_annotation,
             export_yolo_obb_annotation=export_yolo_obb_annotation,
             export_yolo_seg_annotation=export_yolo_seg_annotation,
@@ -1528,6 +1543,7 @@ class LabelingWidget(LabelDialog):
             export_pporc_rec_annotation=export_pporc_rec_annotation,
             export_pporc_kie_annotation=export_pporc_kie_annotation,
             export_vlm_r1_ovd_annotation=export_vlm_r1_ovd_annotation,
+            export_visionmaster_annotation=export_visionmaster_annotation,
             zoom=zoom,
             zoom_in=zoom_in,
             zoom_out=zoom_out,
@@ -1746,6 +1762,7 @@ class LabelingWidget(LabelDialog):
                 upload_ppocr_kie_annotation,
                 None,
                 upload_vlm_r1_ovd_annotation,
+                upload_visionmaster_annotation,
             ),
         )
         utils.add_actions(
@@ -1774,6 +1791,7 @@ class LabelingWidget(LabelDialog):
                 export_pporc_kie_annotation,
                 None,
                 export_vlm_r1_ovd_annotation,
+                export_visionmaster_annotation,
             ),
         )
         utils.add_actions(

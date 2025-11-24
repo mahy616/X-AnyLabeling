@@ -2190,3 +2190,169 @@ class LabelConverter:
                 with open(ppocr_kie_file, "a", encoding="utf-8") as f:
                     f.write(item)
             return class_set
+
+    def visionmaster_to_custom(self, input_file, output_file, image_file):
+        """Convert VisionMaster XML format to Custom JSON format."""
+        self.reset()
+
+        # Validate XML file
+        if not osp.exists(input_file):
+            raise FileNotFoundError(f"XML file not found: {input_file}")
+
+        if osp.getsize(input_file) == 0:
+            raise ValueError(f"XML file is empty: {input_file}")
+
+        try:
+            tree = ET.parse(input_file)
+            root = tree.getroot()
+        except ET.ParseError as e:
+            raise ValueError(f"Invalid XML format: {str(e)}. Please check if this is a VisionMaster XML file.")
+
+        # Get image info
+        image_width, image_height = self.get_image_size(image_file)
+        self.custom_data["imagePath"] = osp.basename(image_file)
+        self.custom_data["imageHeight"] = image_height
+        self.custom_data["imageWidth"] = image_width
+
+        # Parse annotations
+        items_data = root.find("_ItemsData")
+        if items_data is None:
+            logger.warning(f"No _ItemsData found in {input_file}")
+            with open(output_file, "w", encoding="utf-8") as f:
+                json.dump(self.custom_data, f, indent=2, ensure_ascii=False)
+            return
+
+        for param in items_data.findall(
+            "VisionMaster.ModuleMainWindow.ModuleDialogNew.DeepLearning.FlawPolygonRoiParameter"
+        ):
+            # Get label
+            flags_elem = param.find("flags")
+            if flags_elem is None or not flags_elem.text:
+                continue
+            label = flags_elem.text
+
+            # Get visibility
+            visible_elem = param.find("_TIsVisible")
+            is_visible = (
+                visible_elem is not None and visible_elem.text == "True"
+            )
+
+            # Get polygon points
+            points = []
+            polygon_points = param.find("_PolygonPoints")
+            if polygon_points is not None:
+                for point_elem in polygon_points.findall(
+                    "HikPcUI.ImageView.PolygonPoint"
+                ):
+                    x_elem = point_elem.find("x")
+                    y_elem = point_elem.find("y")
+                    if x_elem is not None and y_elem is not None:
+                        x = float(x_elem.text)
+                        y = float(y_elem.text)
+                        points.append([x, y])
+
+            if len(points) < 3:
+                continue
+
+            # Clamp points to image boundaries
+            points = self.clamp_points(points, image_width, image_height)
+
+            shape = {
+                "label": label,
+                "shape_type": "polygon",
+                "flags": {} if is_visible else {"hidden": True},
+                "points": points,
+                "group_id": None,
+                "description": None,
+                "difficult": False,
+                "attributes": {},
+            }
+            self.custom_data["shapes"].append(shape)
+
+        with open(output_file, "w", encoding="utf-8") as f:
+            json.dump(self.custom_data, f, indent=2, ensure_ascii=False)
+
+    def custom_to_visionmaster(self, input_file, output_file):
+        """Convert Custom JSON format to VisionMaster XML format."""
+        with open(input_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        image_path = data.get("imagePath", "")
+        image_width = data.get("imageWidth", 0)
+        image_height = data.get("imageHeight", 0)
+
+        # Create root element
+        root = ET.Element(
+            "VisionMaster.ModuleMainWindow.ModuleDialogNew.DeepLearning.FlawTrainData"
+        )
+
+        # Create _ItemsData container
+        items_data = ET.SubElement(root, "_ItemsData")
+
+        # Process each shape
+        for shape in data.get("shapes", []):
+            if shape.get("shape_type") != "polygon":
+                continue
+
+            label = shape.get("label", "")
+            points = shape.get("points", [])
+            flags = shape.get("flags", {})
+            is_visible = "hidden" not in flags
+
+            if len(points) < 3:
+                continue
+
+            # Create polygon parameter element
+            param = ET.SubElement(
+                items_data,
+                "VisionMaster.ModuleMainWindow.ModuleDialogNew.DeepLearning.FlawPolygonRoiParameter",
+            )
+
+            # Add fields
+            level_num = ET.SubElement(param, "_LevelNum")
+            level_num.text = "2"
+
+            flags_elem = ET.SubElement(param, "flags")
+            flags_elem.text = label
+
+            color_value = ET.SubElement(param, "_ColorValue")
+            color_value.text = "1"
+
+            bg_color = ET.SubElement(param, "_BackgroundColor")
+            bg_color.text = "#FFFF00"
+
+            # Add polygon points
+            polygon_points = ET.SubElement(param, "_PolygonPoints")
+            for point in points:
+                point_elem = ET.SubElement(
+                    polygon_points, "HikPcUI.ImageView.PolygonPoint"
+                )
+                x_elem = ET.SubElement(point_elem, "x")
+                x_elem.text = str(point[0])
+                y_elem = ET.SubElement(point_elem, "y")
+                y_elem.text = str(point[1])
+
+            sign = ET.SubElement(param, "_Sign")
+            sign.text = "True"
+
+            visible = ET.SubElement(param, "_TIsVisible")
+            visible.text = "True" if is_visible else "False"
+
+        # Add other fields
+        calibrated = ET.SubElement(root, "_IsOKCalibrated")
+        calibrated.text = "False"
+
+        image_path_elem = ET.SubElement(root, "_ImagePath")
+        image_path_elem.text = image_path
+
+        # Write to file
+        tree = ET.ElementTree(root)
+        ET.indent(tree, space="  ")
+        tree.write(output_file, encoding="utf-8", xml_declaration=True)
+
+        # Fix formatting to match VisionMaster style
+        with open(output_file, "r", encoding="utf-8") as f:
+            content = f.read()
+        content = content.replace('encoding="utf-8"', 'encoding="utf-8" ')
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(content)

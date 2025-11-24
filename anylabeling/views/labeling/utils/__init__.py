@@ -14,6 +14,7 @@ from .export import (
     export_odvg_annotation,
     export_pporc_annotation,
     export_vlm_r1_ovd_annotation,
+    export_visionmaster_annotation,
 )
 from .general import (
     gradient_text,
@@ -69,5 +70,6 @@ from .upload import (
     upload_mmgd_annotation,
     upload_ppocr_annotation,
     upload_vlm_r1_ovd_annotation,
+    upload_visionmaster_annotation,
 )
 from .video import open_video_file
