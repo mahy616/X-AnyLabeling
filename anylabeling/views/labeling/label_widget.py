@@ -174,6 +174,9 @@ class LabelingWidget(LabelDialog):
         self.label_list = LabelListWidget()
         self.last_open_dir = None
 
+        # Track OK status for VisionMaster format
+        self.is_image_ok = False
+
         self.flag_dock = self.flag_widget = None
         self.flag_dock = QtWidgets.QDockWidget(self.tr("Flags"), self)
         self.flag_dock.setObjectName("Flags")
@@ -1244,7 +1247,6 @@ class LabelingWidget(LabelDialog):
             icon="format_vlm_r1_ovd",
             tip=self.tr("Upload Custom VLM-R1 OVD Annotations"),
         )
-
         # Export
         export_yolo_hbb_annotation = action(
             self.tr("Export YOLO-Hbb Annotations"),
@@ -1377,7 +1379,6 @@ class LabelingWidget(LabelDialog):
             icon="format_vlm_r1_ovd",
             tip=self.tr("Export Custom VLM-R1 OVD Annotations"),
         )
-
         # Group zoom controls into a list for easier toggling.
         zoom_actions = (
             self.zoom_widget,
@@ -1433,6 +1434,17 @@ class LabelingWidget(LabelDialog):
             shortcuts["auto_label"],
             "brain",
             self.tr("Auto Labeling"),
+        )
+
+        # OK Status Action
+        ok_mode = action(
+            self.tr("&Mark as OK"),
+            self.toggle_ok_status,
+            "K",  # Shortcut key
+            "done",  # Use existing checkmark icon
+            self.tr("Mark current image as OK (no defects)"),
+            checkable=True,
+            enabled=False,
         )
 
         # Label list context menu.
@@ -1633,7 +1645,9 @@ class LabelingWidget(LabelDialog):
                 shape_manager,
                 loop_thru_labels,
                 loop_select_labels,
+                ok_mode,
             ),
+            ok_mode=ok_mode,
             on_shapes_present=(save_as, delete),
             hide_selected_polygons=hide_selected_polygons,
             show_hidden_polygons=show_hidden_polygons,
@@ -1853,6 +1867,8 @@ class LabelingWidget(LabelDialog):
             loop_select_labels,
             run_all_images,
             toggle_auto_labeling_widget,
+            None,
+            ok_mode,
             None,
             open_chatbot,
             open_vqa,
@@ -2295,7 +2311,8 @@ class LabelingWidget(LabelDialog):
         self.actions.undo.setEnabled(self.canvas.is_shape_restorable)
 
         if self._config["auto_save"]:
-            label_file = osp.splitext(self.image_path)[0] + ".json"
+            from .label_file import LabelFile
+            label_file = osp.splitext(self.image_path)[0] + LabelFile.suffix
             if self.output_dir:
                 label_file_without_path = osp.basename(label_file)
                 label_file = self.output_dir + "/" + label_file_without_path
@@ -2445,22 +2462,23 @@ class LabelingWidget(LabelDialog):
         label_file_list = []
         if not self.image_list and self.filename:
             dir_path, filename = osp.split(self.filename)
-            label_file = osp.join(
-                dir_path, osp.splitext(filename)[0] + ".json"
-            )
-            if osp.exists(label_file):
-                label_file_list = [label_file]
+            base_name = osp.splitext(filename)[0]
+            # Check both formats
+            for ext in [".json", ".xml"]:
+                label_file = osp.join(dir_path, base_name + ext)
+                if osp.exists(label_file):
+                    label_file_list.append(label_file)
         elif self.image_list and not self.output_dir and self.filename:
             file_list = os.listdir(osp.dirname(self.filename))
             for file_name in file_list:
-                if not file_name.endswith(".json"):
+                if not file_name.endswith((".json", ".xml")):
                     continue
                 label_file_list.append(
                     osp.join(osp.dirname(self.filename), file_name)
                 )
         if self.output_dir:
             for file_name in os.listdir(self.output_dir):
-                if not file_name.endswith(".json"):
+                if not file_name.endswith((".json", ".xml")):
                     continue
                 label_file_list.append(osp.join(self.output_dir, file_name))
         return label_file_list
@@ -3459,7 +3477,8 @@ class LabelingWidget(LabelDialog):
             self.scroll_area.setVisible(False)
 
     def save_attributes(self, _shapes):
-        filename = osp.splitext(self.image_path)[0] + ".json"
+        from .label_file import LabelFile as LF
+        filename = osp.splitext(self.image_path)[0] + LF.suffix
         if self.output_dir:
             label_file_without_path = osp.basename(filename)
             filename = osp.join(self.output_dir, label_file_without_path)
@@ -3755,7 +3774,8 @@ class LabelingWidget(LabelDialog):
         shapes = [
             item.shape().to_dict()
             for item in self.label_list
-            if item.shape().label
+            if item.shape()
+            and item.shape().label
             not in [
                 AutoLabelingMode.OBJECT,
                 AutoLabelingMode.ADD,
@@ -3763,6 +3783,10 @@ class LabelingWidget(LabelDialog):
             ]
         ]
         flags = {}
+        # Add OK flag if image is marked as OK
+        if self.is_image_ok:
+            flags["OK"] = True
+        # Add other flags from flag_widget
         for i in range(self.flag_widget.count()):
             item = self.flag_widget.item(i)
             key = item.text()
@@ -4462,16 +4486,30 @@ class LabelingWidget(LabelDialog):
             )
             return False
 
-        # assumes same name, but json extension
-        label_file = osp.splitext(filename)[0] + ".json"
+        # Find annotation file with current format
+        base_name = osp.splitext(filename)[0]
+        label_file = base_name + LabelFile.suffix
         image_dir = None
         if self.output_dir:
             image_dir = osp.dirname(filename)
             label_file_without_path = osp.basename(label_file)
             label_file = self.output_dir + "/" + label_file_without_path
-        if QtCore.QFile.exists(label_file) and LabelFile.is_label_file(
-            label_file
-        ):
+
+        # Try current format first, then fallback to other format
+        found_label = False
+        if QtCore.QFile.exists(label_file):
+            found_label = True
+        else:
+            # Try alternate format
+            alt_suffix = ".json" if LabelFile.suffix == ".xml" else ".xml"
+            alt_label_file = base_name + alt_suffix
+            if self.output_dir:
+                alt_label_file = self.output_dir + "/" + osp.basename(alt_label_file)
+            if QtCore.QFile.exists(alt_label_file):
+                label_file = alt_label_file
+                found_label = True
+
+        if found_label and LabelFile.is_label_file(label_file):
             try:
                 self.label_file = LabelFile(label_file, image_dir)
             except LabelFileError as e:
@@ -4560,6 +4598,19 @@ class LabelingWidget(LabelDialog):
             if self.label_file.flags is not None:
                 flags.update(self.label_file.flags)
         self.load_flags(flags)
+
+        # Restore OK status from flags
+        if self.label_file and self.label_file.flags:
+            self.is_image_ok = self.label_file.flags.get("OK", False) or self.label_file.flags.get("ok", False)
+        else:
+            self.is_image_ok = False
+
+        # Update UI for OK status
+        if hasattr(self.actions, 'ok_mode'):
+            self.actions.ok_mode.setChecked(self.is_image_ok)
+        if hasattr(self.canvas, 'is_image_ok'):
+            self.canvas.is_image_ok = self.is_image_ok
+        self.update_ok_label_in_list()
 
         # load shapes
         if self._config["keep_prev"] and self.no_shape():
@@ -4947,15 +4998,17 @@ class LabelingWidget(LabelDialog):
         if self.label_file:
             return self.label_file.filename
         base = self.image_path if self.image_path else self.filename
-        if base.lower().endswith(".json"):
+        # Check if base already has label file extension
+        if base.lower().endswith((".json", ".xml")):
             return base
-        lf = osp.splitext(base)[0] + ".json"
+        # Use current format's suffix
+        lf = osp.splitext(base)[0] + LabelFile.suffix
         if self.output_dir:
             lf = osp.join(self.output_dir, osp.basename(lf))
         return lf
 
     def get_image_file(self):
-        if not self.filename.lower().endswith(".json"):
+        if not self.filename.lower().endswith((".json", ".xml")):
             image_file = self.filename
         else:
             image_file = self.image_path
@@ -5033,11 +5086,19 @@ class LabelingWidget(LabelDialog):
             label_dir_path = osp.dirname(self.filename)
             if self.output_dir:
                 label_dir_path = self.output_dir
-            label_name = osp.splitext(image_name)[0] + ".json"
-            label_file = osp.join(label_dir_path, label_name)
-            if not osp.exists(label_file):
-                label_file = osp.join(osp.dirname(image_file), label_name)
-            if osp.exists(label_file):
+            base_name = osp.splitext(image_name)[0]
+            # Try both formats
+            label_file = None
+            for ext in [".json", ".xml"]:
+                test_file = osp.join(label_dir_path, base_name + ext)
+                if osp.exists(test_file):
+                    label_file = test_file
+                    break
+                test_file = osp.join(osp.dirname(image_file), base_name + ext)
+                if osp.exists(test_file):
+                    label_file = test_file
+                    break
+            if label_file and osp.exists(label_file):
                 os.remove(label_file)
                 logger.info(f"Label file is removed: {image_file}")
 
@@ -5188,18 +5249,24 @@ class LabelingWidget(LabelDialog):
             ):
                 continue
             valid_files.append(file)
-            label_file = osp.splitext(file)[0] + ".json"
+            base_name = osp.splitext(file)[0]
+            label_file = base_name + LabelFile.suffix
             if self.output_dir:
                 label_file_without_path = osp.basename(label_file)
                 label_file = self.output_dir + "/" + label_file_without_path
+
+            # Check current format first, then alternate
+            has_annotation = QtCore.QFile.exists(label_file)
+            if not has_annotation:
+                alt_suffix = ".json" if LabelFile.suffix == ".xml" else ".xml"
+                alt_label_file = base_name + alt_suffix
+                if self.output_dir:
+                    alt_label_file = self.output_dir + "/" + osp.basename(alt_label_file)
+                has_annotation = QtCore.QFile.exists(alt_label_file)
+
             item = QtWidgets.QListWidgetItem(file)
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            if QtCore.QFile.exists(label_file) and LabelFile.is_label_file(
-                label_file
-            ):
-                item.setCheckState(Qt.Checked)
-            else:
-                item.setCheckState(Qt.Unchecked)
+            item.setCheckState(Qt.Checked if has_annotation else Qt.Unchecked)
             self.file_list_widget.addItem(item)
             self.fn_to_index[file] = self.file_list_widget.count() - 1
 
@@ -5228,18 +5295,26 @@ class LabelingWidget(LabelDialog):
             if pattern and pattern not in filename:
                 continue
             image_files.append(filename)
-            label_file = osp.splitext(filename)[0] + ".json"
+
+            # Check for annotation file in current format or alternate format
+            base_name = osp.splitext(filename)[0]
+            label_file = base_name + LabelFile.suffix
             if self.output_dir:
                 label_file_without_path = osp.basename(label_file)
                 label_file = self.output_dir + "/" + label_file_without_path
+
+            has_annotation = QtCore.QFile.exists(label_file)
+            if not has_annotation:
+                # Check alternate format
+                alt_suffix = ".json" if LabelFile.suffix == ".xml" else ".xml"
+                alt_label_file = base_name + alt_suffix
+                if self.output_dir:
+                    alt_label_file = self.output_dir + "/" + osp.basename(alt_label_file)
+                has_annotation = QtCore.QFile.exists(alt_label_file)
+
             item = QtWidgets.QListWidgetItem(filename)
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-            if QtCore.QFile.exists(label_file) and LabelFile.is_label_file(
-                label_file
-            ):
-                item.setCheckState(Qt.Checked)
-            else:
-                item.setCheckState(Qt.Unchecked)
+            item.setCheckState(Qt.Checked if has_annotation else Qt.Unchecked)
             self.file_list_widget.addItem(item)
             self.fn_to_index[filename] = self.file_list_widget.count() - 1
 
@@ -5628,3 +5703,72 @@ class LabelingWidget(LabelDialog):
             self.label_dock.widget().setVisible(False)
             self.label_dock.setMinimumHeight(2)
             self.label_dock.setMaximumHeight(2)
+
+    def toggle_ok_status(self):
+        """Toggle OK status for current image (for VisionMaster format)."""
+        if not self.filename:
+            return
+
+        self.is_image_ok = not self.is_image_ok
+
+        # Update button state
+        if hasattr(self.actions, 'ok_mode'):
+            self.actions.ok_mode.setChecked(self.is_image_ok)
+
+        # Clear all shapes when marking as OK
+        if self.is_image_ok and len(self.canvas.shapes) > 0:
+            # Ask for confirmation
+            reply = QtWidgets.QMessageBox.question(
+                self,
+                self.tr("Mark as OK"),
+                self.tr("Marking image as OK will remove all existing annotations.\nAn OK image means no defects found.\n\nContinue?"),
+                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+                QtWidgets.QMessageBox.No
+            )
+            if reply == QtWidgets.QMessageBox.Yes:
+                self.canvas.shapes = []
+                self.label_list.clear()
+            else:
+                # User cancelled, revert OK status
+                self.is_image_ok = False
+                if hasattr(self.actions, 'ok_mode'):
+                    self.actions.ok_mode.setChecked(False)
+                return
+
+        # Update canvas to show/hide OK indicator
+        if hasattr(self.canvas, 'is_image_ok'):
+            self.canvas.is_image_ok = self.is_image_ok
+        self.canvas.update()
+
+        # Update label list
+        self.update_ok_label_in_list()
+
+        # Mark as dirty to prompt save
+        self.set_dirty()
+
+    def update_ok_label_in_list(self):
+        """Add or remove OK entry from label list."""
+        # Find existing OK entry
+        ok_item = None
+        for item in self.label_list:
+            if hasattr(item, 'is_ok_marker') and item.is_ok_marker:
+                ok_item = item
+                break
+
+        if self.is_image_ok:
+            # Add OK entry if not present
+            if ok_item is None:
+                from PyQt5.QtGui import QColor, QFont
+                item = LabelListWidgetItem("✓ OK (No Defects)")
+                item.setForeground(QColor(0, 180, 0))  # Green
+                font = QFont()
+                font.setBold(True)
+                item.setFont(font)
+                item.setCheckable(False)
+                item.setSelectable(False)
+                item.is_ok_marker = True  # Special marker attribute
+                self.label_list.model().insertRow(0, item)  # Insert at top
+        else:
+            # Remove OK entry if present
+            if ok_item is not None:
+                self.label_list.model().removeRow(ok_item.row())

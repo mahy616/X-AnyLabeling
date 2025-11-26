@@ -86,6 +86,7 @@ class Canvas(
         self.is_auto_labeling = False
         self.is_move_editing = False
         self.auto_labeling_mode: AutoLabelingMode = None
+        self.is_image_ok = False  # Track OK status for display
         self.shapes = []
         self.shapes_backups = []
         self.current = None
@@ -1858,6 +1859,39 @@ class Canvas(
                     zip(text_positions, attribute_lines)
                 ):
                     p.drawText(text_pos, line_text)
+
+        # Draw OK indicator in top-right corner if image is marked as OK
+        if self.is_image_ok and self.pixmap:
+            p.save()
+            font_size = int(max(12.0, 18.0 / self.scale))
+            font = QtGui.QFont("Arial", font_size, QtGui.QFont.Bold)
+            p.setFont(font)
+
+            text = "OK"
+            fm = p.fontMetrics()
+            text_rect = fm.boundingRect(text)
+
+            padding = int(max(5.0, 10.0 / self.scale))
+            badge_width = text_rect.width() + 2 * padding
+            badge_height = text_rect.height() + 2 * padding
+
+            margin = int(max(10.0, 20.0 / self.scale))
+            x = self.pixmap.width() - badge_width - margin
+            y = margin
+
+            badge_rect = QtCore.QRectF(x, y, badge_width, badge_height)
+            p.setBrush(QtGui.QColor(76, 175, 80, 220))
+
+            pen_width = int(max(1.0, 2.0 / self.scale))
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255), pen_width))
+
+            corner_radius = int(max(5.0, 10.0 / self.scale))
+            p.drawRoundedRect(badge_rect, corner_radius, corner_radius)
+
+            p.setPen(QtGui.QColor(255, 255, 255))
+            p.drawText(badge_rect, Qt.AlignCenter, text)
+
+            p.restore()
 
         p.end()
 

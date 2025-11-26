@@ -1,0 +1,579 @@
+diff --git a/anylabeling/views/labeling/label_file.py b/anylabeling/views/labeling/label_file.py
+index 4a1ae25..53bbb0c 100644
+--- a/anylabeling/views/labeling/label_file.py
++++ b/anylabeling/views/labeling/label_file.py
+@@ -1,6 +1,7 @@
+ import base64
+ import json
+ import os.path as osp
++import xml.etree.ElementTree as ET
+ 
+ import PIL.Image
+ from PIL import ImageFile
+@@ -21,7 +22,7 @@ class LabelFileError(Exception):
+ 
+ 
+ class LabelFile:
+-    suffix = ".json"
++    suffix = ".xml"  # Default to VisionMaster format
+ 
+     def __init__(self, filename=None, image_dir=None):
+         self.shapes = []
+@@ -51,7 +52,8 @@ class LabelFile:
+ 
+     @staticmethod
+     def is_label_file(filename):
+-        return osp.splitext(filename)[1].lower() == LabelFile.suffix
++        ext = osp.splitext(filename)[1].lower()
++        return ext in [".xml", ".json"]  # Support both VisionMaster and JSON formats
+ 
+     @staticmethod
+     def load_image_file(filename, default=None):
+@@ -63,6 +65,13 @@ class LabelFile:
+             return default
+ 
+     def load(self, filename):
++        ext = osp.splitext(filename)[1].lower()
++        if ext == ".xml":
++            self._load_xml(filename)
++        else:
++            self._load_json(filename)
++
++    def _load_json(self, filename):
+         try:
+             with utils.io_open(filename, "r") as f:
+                 data = json.load(f)
+@@ -130,6 +139,150 @@ class LabelFile:
+         self.filename = filename
+         self.other_data = other_data
+ 
++    def _load_xml(self, filename):
++        """Load VisionMaster XML format"""
++        try:
++            if osp.getsize(filename) == 0:
++                # Empty XML means OK image
++                image_path = osp.splitext(osp.basename(filename))[0]
++                # Try to find image with common extensions
++                for ext in ['.jpg', '.png', '.bmp', '.jpeg']:
++                    test_path = osp.join(osp.dirname(filename),
++                                        osp.splitext(osp.basename(filename))[0] + ext)
++                    if osp.exists(test_path):
++                        image_path = osp.basename(test_path)
++                        image_data = self.load_image_file(test_path)
++                        break
++                else:
++                    raise LabelFileError("Image file not found for empty XML")
++
++                self.flags = {"OK": True}
++                self.shapes = []
++                self.image_path = image_path
++                self.image_data = image_data
++                self.filename = filename
++                self.other_data = {"description": ""}
++                return
++
++            tree = ET.parse(filename)
++            root = tree.getroot()
++
++            # Get image path from XML
++            image_path_elem = root.find("_ImagePath")
++            if image_path_elem is not None and image_path_elem.text:
++                image_path = osp.basename(image_path_elem.text)
++            else:
++                image_path = osp.splitext(osp.basename(filename))[0]
++
++            # Load image data
++            if self.image_dir:
++                full_image_path = osp.join(self.image_dir, image_path)
++            else:
++                full_image_path = osp.join(osp.dirname(filename), image_path)
++            image_data = self.load_image_file(full_image_path)
++
++            # Parse shapes
++            shapes = []
++            items_data = root.find("_ItemsData")
++            if items_data is not None:
++                import math
++
++                # Load FlawCoverRoiParameter (rectangle/rotation)
++                for param in items_data.findall(
++                    "VisionMaster.ModuleMainWindow.ModuleDialogNew.DeepLearning.FlawCoverRoiParameter"
++                ):
++                    flags_elem = param.find("flags")
++                    label = flags_elem.text if flags_elem is not None and flags_elem.text else "ignore"
++
++                    visible_elem = param.find("_TIsVisible")
++                    is_visible = visible_elem is not None and visible_elem.text == "True"
++
++                    # Parse origin, width, height, angle
++                    origin_elem = param.find("_OriginPoint")
++                    width_elem = param.find("_width")
++                    height_elem = param.find("_height")
++                    angle_elem = param.find("_Angle")
++
++                    if origin_elem is not None and width_elem is not None and height_elem is not None:
++                        cx, cy = map(float, origin_elem.text.split(','))
++                        width = float(width_elem.text)
++                        height = float(height_elem.text)
++                        angle = float(angle_elem.text) if angle_elem is not None else 0
++
++                        # Convert to 4 corner points
++                        angle_rad = math.radians(angle)
++                        cos_a = math.cos(angle_rad)
++                        sin_a = math.sin(angle_rad)
++                        w_half = width / 2
++                        h_half = height / 2
++
++                        # Four corners (top-left, top-right, bottom-right, bottom-left)
++                        points = [
++                            [cx + (-w_half * cos_a - (-h_half) * sin_a), cy + (-w_half * sin_a + (-h_half) * cos_a)],
++                            [cx + (w_half * cos_a - (-h_half) * sin_a), cy + (w_half * sin_a + (-h_half) * cos_a)],
++                            [cx + (w_half * cos_a - h_half * sin_a), cy + (w_half * sin_a + h_half * cos_a)],
++                            [cx + (-w_half * cos_a - h_half * sin_a), cy + (-w_half * sin_a + h_half * cos_a)]
++                        ]
++
++                        # Determine shape_type based on angle
++                        shape_type = "rectangle" if abs(angle) < 0.01 else "rotation"
++
++                        shape_dict = {
++                            "label": label,
++                            "shape_type": shape_type,
++                            "flags": {} if is_visible else {"hidden": True},
++                            "points": points,
++                            "group_id": None,
++                            "description": "",
++                            "difficult": False,
++                            "attributes": {},
++                        }
++                        shape = Shape().load_from_dict(shape_dict)
++                        shapes.append(shape)
++
++                # Load FlawPolygonRoiParameter (polygon)
++                for param in items_data.findall(
++                    "VisionMaster.ModuleMainWindow.ModuleDialogNew.DeepLearning.FlawPolygonRoiParameter"
++                ):
++                    flags_elem = param.find("flags")
++                    label = flags_elem.text if flags_elem is not None and flags_elem.text else "ignore"
++
++                    visible_elem = param.find("_TIsVisible")
++                    is_visible = visible_elem is not None and visible_elem.text == "True"
++
++                    points = []
++                    polygon_points = param.find("_PolygonPoints")
++                    if polygon_points is not None:
++                        for point_elem in polygon_points.findall("HikPcUI.ImageView.PolygonPoint"):
++                            x_elem = point_elem.find("x")
++                            y_elem = point_elem.find("y")
++                            if x_elem is not None and y_elem is not None:
++                                points.append([float(x_elem.text), float(y_elem.text)])
++
++                    if len(points) >= 3:
++                        shape_dict = {
++                            "label": label,
++                            "shape_type": "polygon",
++                            "flags": {} if is_visible else {"hidden": True},
++                            "points": points,
++                            "group_id": None,
++                            "description": "",
++                            "difficult": False,
++                            "attributes": {},
++                        }
++                        shape = Shape().load_from_dict(shape_dict)
++                        shapes.append(shape)
++
++            self.flags = {}
++            self.shapes = shapes
++            self.image_path = image_path
++            self.image_data = image_data
++            self.filename = filename
++            self.other_data = {"description": ""}
++
++        except Exception as e:
++            raise LabelFileError(e) from e
++
+     def save(
+         self,
+         filename=None,
+@@ -141,6 +294,15 @@ class LabelFile:
+         other_data=None,
+         flags=None,
+     ):
++        ext = osp.splitext(filename)[1].lower()
++        if ext == ".xml":
++            self._save_xml(filename, shapes, image_path, flags)
++        else:
++            self._save_json(filename, shapes, image_path, image_height,
++                          image_width, image_data, other_data, flags)
++
++    def _save_json(self, filename, shapes, image_path, image_height,
++                   image_width, image_data, other_data, flags):
+         if image_data is not None:
+             image_data = base64.b64encode(image_data).decode("utf-8")
+             image_height, image_width = self._check_image_height_and_width(
+@@ -183,3 +345,141 @@ class LabelFile:
+             self.filename = filename
+         except Exception as e:  # noqa
+             raise LabelFileError(e) from e
++
++    def _save_xml(self, filename, shapes, image_path, flags):
++        """Save as VisionMaster XML format"""
++        try:
++            import math
++
++            root = ET.Element(
++                "VisionMaster.ModuleMainWindow.ModuleDialogNew.DeepLearning.FlawTrainData"
++            )
++
++            # Check if OK flag is set
++            is_ok = flags and (flags.get("OK") or flags.get("ok"))
++
++            if is_ok:
++                # Empty XML for OK images
++                calibrated = ET.SubElement(root, "_IsOKCalibrated")
++                calibrated.text = "False"
++                image_path_elem = ET.SubElement(root, "_ImagePath")
++                image_path_elem.text = image_path
++            else:
++                # Add shapes
++                items_data = ET.SubElement(root, "_ItemsData")
++
++                for shape in shapes:
++                    shape_type = shape["shape_type"]
++                    label = shape.get("label", "")
++                    is_ignore = label.lower() == "ignore"
++
++                    # Rectangle and Rotation -> FlawCoverRoiParameter
++                    if shape_type in ["rectangle", "rotation"]:
++                        param = ET.SubElement(
++                            items_data,
++                            "VisionMaster.ModuleMainWindow.ModuleDialogNew.DeepLearning.FlawCoverRoiParameter"
++                        )
++
++                        points = shape["points"]
++                        # Calculate center point, width, height, angle
++                        cx = sum(p[0] for p in points) / len(points)
++                        cy = sum(p[1] for p in points) / len(points)
++
++                        # Calculate width and height from first two edges
++                        width = math.sqrt((points[1][0] - points[0][0])**2 + (points[1][1] - points[0][1])**2)
++                        height = math.sqrt((points[2][0] - points[1][0])**2 + (points[2][1] - points[1][1])**2)
++
++                        # Calculate angle (from horizontal to first edge)
++                        angle = math.degrees(math.atan2(points[1][1] - points[0][1], points[1][0] - points[0][0]))
++                        if shape_type == "rectangle":
++                            angle = 0  # Force 0 for rectangle
++
++                        level_num = ET.SubElement(param, "_LevelNum")
++                        level_num.text = "1" if is_ignore else "2"
++
++                        flags_elem = ET.SubElement(param, "flags")
++                        flags_elem.text = "" if is_ignore else label
++
++                        color_value = ET.SubElement(param, "_ColorValue")
++                        color_value.text = "128" if is_ignore else "0"
++
++                        bg_color = ET.SubElement(param, "_BackgroundColor")
++                        bg_color.text = "#fe8b04" if is_ignore else "#ff1a1a"
++
++                        origin = ET.SubElement(param, "_OriginPoint")
++                        origin.text = f"{cx},{cy}"
++
++                        width_elem = ET.SubElement(param, "_width")
++                        width_elem.text = str(width)
++
++                        height_elem = ET.SubElement(param, "_height")
++                        height_elem.text = str(height)
++
++                        sign = ET.SubElement(param, "_Sign")
++                        sign.text = "True"
++
++                        sign_visible = ET.SubElement(param, "_TIsSignVisible")
++                        sign_visible.text = "True"
++
++                        angle_elem = ET.SubElement(param, "_Angle")
++                        angle_elem.text = str(angle)
++
++                        visible = ET.SubElement(param, "_TIsVisible")
++                        is_visible = "hidden" not in shape.get("flags", {})
++                        visible.text = "True" if is_visible else "False"
++
++                    # Polygon -> FlawPolygonRoiParameter
++                    elif shape_type == "polygon":
++                        param = ET.SubElement(
++                            items_data,
++                            "VisionMaster.ModuleMainWindow.ModuleDialogNew.DeepLearning.FlawPolygonRoiParameter"
++                        )
++
++                        level_num = ET.SubElement(param, "_LevelNum")
++                        level_num.text = "1" if is_ignore else "2"
++
++                        flags_elem = ET.SubElement(param, "flags")
++                        flags_elem.text = "" if is_ignore else label
++
++                        color_value = ET.SubElement(param, "_ColorValue")
++                        color_value.text = "128" if is_ignore else "0"
++
++                        bg_color = ET.SubElement(param, "_BackgroundColor")
++                        bg_color.text = "#fe8b04" if is_ignore else "#ff1a1a"
++
++                        polygon_points = ET.SubElement(param, "_PolygonPoints")
++                        for point in shape["points"]:
++                            point_elem = ET.SubElement(
++                                polygon_points, "HikPcUI.ImageView.PolygonPoint"
++                            )
++                            x_elem = ET.SubElement(point_elem, "x")
++                            x_elem.text = str(point[0])
++                            y_elem = ET.SubElement(point_elem, "y")
++                            y_elem.text = str(point[1])
++
++                        sign = ET.SubElement(param, "_Sign")
++                        sign.text = "True"
++
++                        visible = ET.SubElement(param, "_TIsVisible")
++                        is_visible = "hidden" not in shape.get("flags", {})
++                        visible.text = "True" if is_visible else "False"
++
++                calibrated = ET.SubElement(root, "_IsOKCalibrated")
++                calibrated.text = "False"
++                image_path_elem = ET.SubElement(root, "_ImagePath")
++                image_path_elem.text = image_path
++
++            tree = ET.ElementTree(root)
++            ET.indent(tree, space="  ")
++            tree.write(filename, encoding="utf-8", xml_declaration=True)
++
++            # Fix format to match VisionMaster
++            with open(filename, "r", encoding="utf-8") as f:
++                content = f.read()
++            content = content.replace('encoding="utf-8"', 'encoding="utf-8" ')
++            with open(filename, "w", encoding="utf-8") as f:
++                f.write(content)
++
++            self.filename = filename
++        except Exception as e:
++            raise LabelFileError(e) from e
+diff --git a/anylabeling/views/labeling/label_widget.py b/anylabeling/views/labeling/label_widget.py
+index 9157fc6..f6f36cf 100644
+--- a/anylabeling/views/labeling/label_widget.py
++++ b/anylabeling/views/labeling/label_widget.py
+@@ -174,6 +174,9 @@ class LabelingWidget(LabelDialog):
+         self.label_list = LabelListWidget()
+         self.last_open_dir = None
+ 
++        # Track OK status for VisionMaster format
++        self.is_image_ok = False
++
+         self.flag_dock = self.flag_widget = None
+         self.flag_dock = QtWidgets.QDockWidget(self.tr("Flags"), self)
+         self.flag_dock.setObjectName("Flags")
+@@ -1244,6 +1247,13 @@ class LabelingWidget(LabelDialog):
+             icon="format_vlm_r1_ovd",
+             tip=self.tr("Upload Custom VLM-R1 OVD Annotations"),
+         )
++        upload_visionmaster_annotation = action(
++            self.tr("Upload VisionMaster Annotations"),
++            lambda: utils.upload_visionmaster_annotation(self, LABEL_OPACITY),
++            None,
++            icon="format_voc",
++            tip=self.tr("Upload Custom VisionMaster Annotations"),
++        )
+ 
+         # Export
+         export_yolo_hbb_annotation = action(
+@@ -1377,6 +1387,13 @@ class LabelingWidget(LabelDialog):
+             icon="format_vlm_r1_ovd",
+             tip=self.tr("Export Custom VLM-R1 OVD Annotations"),
+         )
++        export_visionmaster_annotation = action(
++            self.tr("Export VisionMaster Annotations"),
++            lambda: utils.export_visionmaster_annotation(self),
++            None,
++            icon="format_visionmaster",
++            tip=self.tr("Export Custom VisionMaster Annotations"),
++        )
+ 
+         # Group zoom controls into a list for easier toggling.
+         zoom_actions = (
+@@ -1435,6 +1452,17 @@ class LabelingWidget(LabelDialog):
+             self.tr("Auto Labeling"),
+         )
+ 
++        # OK Status Action
++        ok_mode = action(
++            self.tr("&Mark as OK"),
++            self.toggle_ok_status,
++            "K",  # Shortcut key
++            "done",  # Use existing checkmark icon
++            self.tr("Mark current image as OK (no defects)"),
++            checkable=True,
++            enabled=False,
++        )
++
+         # Label list context menu.
+         label_menu = QtWidgets.QMenu()
+         utils.add_actions(
+@@ -1511,6 +1539,7 @@ class LabelingWidget(LabelDialog):
+             upload_ppocr_rec_annotation=upload_ppocr_rec_annotation,
+             upload_ppocr_kie_annotation=upload_ppocr_kie_annotation,
+             upload_vlm_r1_ovd_annotation=upload_vlm_r1_ovd_annotation,
++            upload_visionmaster_annotation=upload_visionmaster_annotation,
+             export_yolo_hbb_annotation=export_yolo_hbb_annotation,
+             export_yolo_obb_annotation=export_yolo_obb_annotation,
+             export_yolo_seg_annotation=export_yolo_seg_annotation,
+@@ -1528,6 +1557,7 @@ class LabelingWidget(LabelDialog):
+             export_pporc_rec_annotation=export_pporc_rec_annotation,
+             export_pporc_kie_annotation=export_pporc_kie_annotation,
+             export_vlm_r1_ovd_annotation=export_vlm_r1_ovd_annotation,
++            export_visionmaster_annotation=export_visionmaster_annotation,
+             zoom=zoom,
+             zoom_in=zoom_in,
+             zoom_out=zoom_out,
+@@ -1633,7 +1663,9 @@ class LabelingWidget(LabelDialog):
+                 shape_manager,
+                 loop_thru_labels,
+                 loop_select_labels,
++                ok_mode,
+             ),
++            ok_mode=ok_mode,
+             on_shapes_present=(save_as, delete),
+             hide_selected_polygons=hide_selected_polygons,
+             show_hidden_polygons=show_hidden_polygons,
+@@ -1746,6 +1778,7 @@ class LabelingWidget(LabelDialog):
+                 upload_ppocr_kie_annotation,
+                 None,
+                 upload_vlm_r1_ovd_annotation,
++                upload_visionmaster_annotation,
+             ),
+         )
+         utils.add_actions(
+@@ -1774,6 +1807,7 @@ class LabelingWidget(LabelDialog):
+                 export_pporc_kie_annotation,
+                 None,
+                 export_vlm_r1_ovd_annotation,
++                export_visionmaster_annotation,
+             ),
+         )
+         utils.add_actions(
+@@ -1854,6 +1888,8 @@ class LabelingWidget(LabelDialog):
+             run_all_images,
+             toggle_auto_labeling_widget,
+             None,
++            ok_mode,
++            None,
+             open_chatbot,
+             open_vqa,
+             open_classifier,
+@@ -3755,7 +3791,8 @@ class LabelingWidget(LabelDialog):
+         shapes = [
+             item.shape().to_dict()
+             for item in self.label_list
+-            if item.shape().label
++            if item.shape()
++            and item.shape().label
+             not in [
+                 AutoLabelingMode.OBJECT,
+                 AutoLabelingMode.ADD,
+@@ -3763,6 +3800,10 @@ class LabelingWidget(LabelDialog):
+             ]
+         ]
+         flags = {}
++        # Add OK flag if image is marked as OK
++        if self.is_image_ok:
++            flags["OK"] = True
++        # Add other flags from flag_widget
+         for i in range(self.flag_widget.count()):
+             item = self.flag_widget.item(i)
+             key = item.text()
+@@ -4561,6 +4602,19 @@ class LabelingWidget(LabelDialog):
+                 flags.update(self.label_file.flags)
+         self.load_flags(flags)
+ 
++        # Restore OK status from flags
++        if self.label_file and self.label_file.flags:
++            self.is_image_ok = self.label_file.flags.get("OK", False) or self.label_file.flags.get("ok", False)
++        else:
++            self.is_image_ok = False
++
++        # Update UI for OK status
++        if hasattr(self.actions, 'ok_mode'):
++            self.actions.ok_mode.setChecked(self.is_image_ok)
++        if hasattr(self.canvas, 'is_image_ok'):
++            self.canvas.is_image_ok = self.is_image_ok
++        self.update_ok_label_in_list()
++
+         # load shapes
+         if self._config["keep_prev"] and self.no_shape():
+             self.load_shapes(
+@@ -5628,3 +5682,72 @@ class LabelingWidget(LabelDialog):
+             self.label_dock.widget().setVisible(False)
+             self.label_dock.setMinimumHeight(2)
+             self.label_dock.setMaximumHeight(2)
++
++    def toggle_ok_status(self):
++        """Toggle OK status for current image (for VisionMaster format)."""
++        if not self.filename:
++            return
++
++        self.is_image_ok = not self.is_image_ok
++
++        # Update button state
++        if hasattr(self.actions, 'ok_mode'):
++            self.actions.ok_mode.setChecked(self.is_image_ok)
++
++        # Clear all shapes when marking as OK
++        if self.is_image_ok and len(self.canvas.shapes) > 0:
++            # Ask for confirmation
++            reply = QtWidgets.QMessageBox.question(
++                self,
++                self.tr("Mark as OK"),
++                self.tr("Marking image as OK will remove all existing annotations.\nAn OK image means no defects found.\n\nContinue?"),
++                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
++                QtWidgets.QMessageBox.No
++            )
++            if reply == QtWidgets.QMessageBox.Yes:
++                self.canvas.shapes = []
++                self.label_list.clear()
++            else:
++                # User cancelled, revert OK status
++                self.is_image_ok = False
++                if hasattr(self.actions, 'ok_mode'):
++                    self.actions.ok_mode.setChecked(False)
++                return
++
++        # Update canvas to show/hide OK indicator
++        if hasattr(self.canvas, 'is_image_ok'):
++            self.canvas.is_image_ok = self.is_image_ok
++        self.canvas.update()
++
++        # Update label list
++        self.update_ok_label_in_list()
++
++        # Mark as dirty to prompt save
++        self.set_dirty()
++
++    def update_ok_label_in_list(self):
++        """Add or remove OK entry from label list."""
++        # Find existing OK entry
++        ok_item = None
++        for item in self.label_list:
++            if hasattr(item, 'is_ok_marker') and item.is_ok_marker:
++                ok_item = item
++                break
++
++        if self.is_image_ok:
++            # Add OK entry if not present
++            if ok_item is None:
++                from PyQt5.QtGui import QColor, QFont
++                item = LabelListWidgetItem("✓ OK (No Defects)")
++                item.setForeground(QColor(0, 180, 0))  # Green
++                font = QFont()
++                font.setBold(True)
++                item.setFont(font)
++                item.setCheckable(False)
++                item.setSelectable(False)
++                item.is_ok_marker = True  # Special marker attribute
++                self.label_list.model().insertRow(0, item)  # Insert at top
++        else:
++            # Remove OK entry if present
++            if ok_item is not None:
++                self.label_list.model().removeRow(ok_item.row())
