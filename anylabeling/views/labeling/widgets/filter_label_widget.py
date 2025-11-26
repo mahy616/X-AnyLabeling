@@ -41,3 +41,26 @@ class LabelFilterComboBox(QWidget):
         self.items = items
         self.text_box.clear()
         self.text_box.addItems(self.items)
+
+
+class FileLabelFilterComboBox(QWidget):
+    """Filter combobox for filtering file list by label"""
+    def __init__(self, parent=None, items=[]):
+        super(FileLabelFilterComboBox, self).__init__(parent)
+        self.items = items
+        self.text_box = QComboBox()
+        self.text_box.setToolTip(self.tr("Filter Files by Label"))
+        self.text_box.addItems(self.items)
+        self.text_box.currentIndexChanged.connect(
+            parent.file_label_filter_changed
+        )
+
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 2, 0, 2)
+        layout.addWidget(self.text_box)
+        self.setLayout(layout)
+
+    def update_items(self, items):
+        self.items = items
+        self.text_box.clear()
+        self.text_box.addItems(self.items)

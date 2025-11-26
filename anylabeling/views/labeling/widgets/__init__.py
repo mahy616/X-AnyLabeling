@@ -9,7 +9,11 @@ from .classifier_dialog import ClassifierDialog
 from .color_dialog import ColorDialog
 from .crosshair_settings_dialog import CrosshairSettingsDialog
 from .file_dialog_preview import FileDialogPreview
-from .filter_label_widget import GroupIDFilterComboBox, LabelFilterComboBox
+from .filter_label_widget import (
+    GroupIDFilterComboBox,
+    LabelFilterComboBox,
+    FileLabelFilterComboBox,
+)
 from .shape_dialog import ShapeModifyDialog
 from .label_dialog import (
     DigitShortcutDialog,

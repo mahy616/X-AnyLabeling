@@ -59,6 +59,7 @@ from .widgets import (
     GroupIDFilterComboBox,
     LabelDialog,
     LabelFilterComboBox,
+    FileLabelFilterComboBox,
     LabelListWidget,
     LabelListWidgetItem,
     DigitShortcutDialog,
@@ -195,6 +196,9 @@ class LabelingWidget(LabelDialog):
         # Create and add combobox for showing unique labels or group ids in group
         self.label_filter_combobox = LabelFilterComboBox(self)
         self.gid_filter_combobox = GroupIDFilterComboBox(self)
+
+        # Create filter combobox for unique label list (all images' labels)
+        self.unique_label_filter_combobox = FileLabelFilterComboBox(self)
 
         # Create select all/none toggle button
         self.select_toggle_button = QPushButton(self.tr("Select"), self)
@@ -2030,6 +2034,12 @@ class LabelingWidget(LabelDialog):
         labels_header_widget.setLayout(labels_header_layout)
         right_sidebar_layout.addWidget(labels_header_widget)
 
+        # Add filter combobox for unique label list
+        unique_label_filter_layout = QHBoxLayout()
+        unique_label_filter_layout.setContentsMargins(0, 0, 0, 0)
+        unique_label_filter_layout.addWidget(self.unique_label_filter_combobox)
+        right_sidebar_layout.addLayout(unique_label_filter_layout)
+
         # Hide the original dock title bar
         empty_widget = QWidget()
         empty_widget.setFixedHeight(0)
@@ -2412,6 +2422,245 @@ class LabelingWidget(LabelDialog):
         else:
             self.canvas.select_shapes([])
             self.select_toggle_button.setText(self.tr("Select"))
+
+    def file_label_filter_changed(self, index):
+        """Filter file list by selected label from unique_label_list"""
+        selected_label = self.unique_label_filter_combobox.text_box.itemText(index)
+
+        logger.info(f"Filter changed: selected label = '{selected_label}'")
+
+        if not selected_label:
+            # Empty selection means show all files
+            for i in range(self.file_list_widget.count()):
+                item = self.file_list_widget.item(i)
+                item.setHidden(False)
+            logger.info(f"Showing all {self.file_list_widget.count()} files")
+        else:
+            # Filter files by label
+            shown_count = 0
+            hidden_count = 0
+            for i in range(self.file_list_widget.count()):
+                item = self.file_list_widget.item(i)
+                filename = item.text()
+
+                # Check if this file contains the selected label
+                has_label = self._check_file_has_label(filename, selected_label)
+                item.setHidden(not has_label)
+
+                if has_label:
+                    shown_count += 1
+                else:
+                    hidden_count += 1
+
+            logger.info(f"Filter result: {shown_count} shown, {hidden_count} hidden")
+
+    def _check_file_has_label(self, filename, target_label):
+        """Check if the annotation file contains the target label"""
+        if not filename or not self.last_open_dir:
+            logger.debug(f"_check_file_has_label: filename or last_open_dir is empty")
+            return False
+
+        # Get full file path
+        file_path = osp.join(self.last_open_dir, filename)
+        base_path = osp.splitext(file_path)[0]
+
+        # Try XML format first
+        xml_file = base_path + ".xml"
+
+        # Also check output_dir if it's set
+        if self.output_dir:
+            xml_file_alt = osp.join(self.output_dir, osp.basename(base_path) + ".xml")
+            if osp.exists(xml_file_alt):
+                xml_file = xml_file_alt
+
+        if osp.exists(xml_file):
+            labels = self._load_labels_from_xml(xml_file)
+            result = target_label in labels
+            logger.debug(f"XML {osp.basename(xml_file)}: labels={labels}, has '{target_label}'={result}")
+            return result
+
+        # Try JSON format
+        json_file = base_path + ".json"
+
+        # Also check output_dir if it's set
+        if self.output_dir:
+            json_file_alt = osp.join(self.output_dir, osp.basename(base_path) + ".json")
+            if osp.exists(json_file_alt):
+                json_file = json_file_alt
+
+        if osp.exists(json_file):
+            labels = self._load_labels_from_json(json_file)
+            result = target_label in labels
+            logger.debug(f"JSON {osp.basename(json_file)}: labels={labels}, has '{target_label}'={result}")
+            return result
+
+        logger.debug(f"No annotation file found for {filename}")
+        return False
+
+    def _load_labels_from_xml(self, xml_file):
+        """Extract all labels from XML annotation file"""
+        import xml.etree.ElementTree as ET
+        labels = set()
+
+        try:
+            # Handle empty XML files
+            if osp.getsize(xml_file) == 0:
+                return labels
+
+            tree = ET.parse(xml_file)
+            root = tree.getroot()
+
+            # Check for VisionMaster XML format
+            items_data = root.find("_ItemsData")
+            if items_data is not None:
+                # VisionMaster format - find all elements with "flags" tag
+                # This covers all parameter types: FlawCoverRoiParameter, FlawPolygonRoiParameter, etc.
+                for flags_elem in items_data.iter("flags"):
+                    if flags_elem.text and flags_elem.text.strip():
+                        labels.add(flags_elem.text.strip())
+            else:
+                # Standard PASCAL VOC format
+                for obj in root.findall(".//object"):
+                    name_elem = obj.find("name")
+                    if name_elem is not None and name_elem.text:
+                        labels.add(name_elem.text.strip())
+        except Exception as e:
+            logger.warning(f"Error loading labels from XML {xml_file}: {e}")
+
+        return labels
+
+    def _load_labels_from_json(self, json_file):
+        """Extract all labels from JSON annotation file"""
+        labels = set()
+
+        try:
+            with open(json_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # Extract labels from shapes
+            for shape in data.get('shapes', []):
+                label = shape.get('label')
+                if label:
+                    labels.add(label)
+        except Exception as e:
+            logger.warning(f"Error loading labels from JSON {json_file}: {e}")
+
+        return labels
+
+    def _load_labels_from_label_color_file(self, dirpath):
+        """Load labels from label_color.txt file in the directory
+        Format: ID label_name
+        Example:
+        1 崩
+        2 碰伤
+        5 刮伤
+        """
+        label_color_file = osp.join(dirpath, "label_color.txt")
+
+        if not osp.exists(label_color_file):
+            logger.info(f"label_color.txt not found in {dirpath}")
+            return
+
+        try:
+            with open(label_color_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+
+                # Format: ID label_name (space-separated)
+                parts = line.split(None, 1)  # Split on first whitespace only
+
+                if len(parts) < 2:
+                    logger.warning(f"Invalid line in label_color.txt: {line}")
+                    continue
+
+                label_id_str, label_name = parts[0], parts[1]
+
+                # Validate ID is numeric
+                try:
+                    label_id = int(label_id_str)
+                except ValueError:
+                    logger.warning(f"Invalid label ID '{label_id_str}' in line: {line}")
+                    continue
+
+                # Add label to unique_label_list if not already present
+                if not self.unique_label_list.find_items_by_label(label_name):
+                    item = self.unique_label_list.create_item_from_label(label_name)
+                    self.unique_label_list.addItem(item)
+
+                    # Get color based on label
+                    rgb = self._get_rgb_by_label(label_name)
+
+                    self.unique_label_list.set_item_label(
+                        item, label_name, rgb, LABEL_OPACITY
+                    )
+
+            # Update the filter combobox after loading labels
+            self.update_unique_label_filter()
+
+            logger.info(f"Loaded {self.unique_label_list.count()} labels from {label_color_file}")
+
+        except Exception as e:
+            logger.error(f"Error loading label_color.txt from {dirpath}: {e}")
+
+    def _save_labels_to_label_color_file(self, dirpath):
+        """Save current labels to label_color.txt file
+        Format: ID label_name
+        Example:
+        1 崩
+        2 碰伤
+        """
+        if LabelFile.suffix != ".xml":
+            return
+
+        label_color_file = osp.join(dirpath, "label_color.txt")
+
+        try:
+            # Read existing file to preserve IDs if they exist
+            existing_labels = {}
+            next_id = 1
+
+            if osp.exists(label_color_file):
+                try:
+                    with open(label_color_file, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line or line.startswith('#'):
+                                continue
+                            parts = line.split(None, 1)
+                            if len(parts) >= 2:
+                                try:
+                                    label_id = int(parts[0])
+                                    label_name = parts[1]
+                                    existing_labels[label_name] = label_id
+                                    next_id = max(next_id, label_id + 1)
+                                except ValueError:
+                                    pass
+                except Exception as e:
+                    logger.warning(f"Error reading existing label_color.txt: {e}")
+
+            # Write updated file
+            with open(label_color_file, 'w', encoding='utf-8') as f:
+                for i in range(self.unique_label_list.count()):
+                    item = self.unique_label_list.item(i)
+                    label_name = item.data(Qt.UserRole)
+                    if label_name:
+                        # Use existing ID if available, otherwise assign new ID
+                        if label_name in existing_labels:
+                            label_id = existing_labels[label_name]
+                        else:
+                            label_id = next_id
+                            next_id += 1
+
+                        f.write(f"{label_id} {label_name}\n")
+
+            logger.info(f"Saved {self.unique_label_list.count()} labels to {label_color_file}")
+
+        except Exception as e:
+            logger.error(f"Error saving label_color.txt to {dirpath}: {e}")
 
     def reset_attribute(self, text):
         # Skip validation for auto-labeling special constants
@@ -3674,6 +3923,13 @@ class LabelingWidget(LabelDialog):
                     item, label, rgb, LABEL_OPACITY
                 )
 
+        # Update the file label filter combobox
+        self.update_unique_label_filter()
+
+        # Save to label_color.txt after loading labels
+        if self.last_open_dir and LabelFile.suffix == ".xml":
+            self._save_labels_to_label_color_file(self.last_open_dir)
+
     def _update_shape_color(self, shape):
         r, g, b = self._get_rgb_by_label(shape.label)
         shape.line_color = QtGui.QColor(r, g, b)
@@ -3690,6 +3946,11 @@ class LabelingWidget(LabelDialog):
             if not self.unique_label_list.find_items_by_label(label):
                 item = self.unique_label_list.create_item_from_label(label)
                 self.unique_label_list.addItem(item)
+                # Update filter when new label is added
+                self.update_unique_label_filter()
+                # Save to label_color.txt when new label is added
+                if self.last_open_dir and LabelFile.suffix == ".xml":
+                    self._save_labels_to_label_color_file(self.last_open_dir)
             item = self.unique_label_list.find_items_by_label(label)[0]
             label_id = self.unique_label_list.indexFromItem(item).row() + 1
             label_id += self._config["shift_auto_shape_color"]
@@ -3766,6 +4027,21 @@ class LabelingWidget(LabelDialog):
         unique_gid_list.append("-1")
         unique_gid_list.sort()
         self.gid_filter_combobox.update_items(unique_gid_list)
+
+    def update_unique_label_filter(self):
+        """Update the file label filter combobox with labels from unique_label_list"""
+        labels_list = []
+        for i in range(self.unique_label_list.count()):
+            item = self.unique_label_list.item(i)
+            label = item.data(Qt.UserRole)
+            if label:
+                labels_list.append(str(label))
+
+        unique_labels_list = list(set(labels_list))
+        # Add empty option for showing all files
+        unique_labels_list.append("")
+        unique_labels_list.sort()
+        self.unique_label_filter_combobox.update_items(unique_labels_list)
 
     def save_labels(self, filename):
         label_file = LabelFile()
@@ -5289,6 +5565,10 @@ class LabelingWidget(LabelDialog):
         self.last_open_dir = dirpath
         self.filename = None
         self.file_list_widget.clear()
+
+        # Clear unique label list when loading new folder
+        self.unique_label_list.clear()
+
         image_files = []
 
         for filename in utils.scan_all_images(dirpath):
@@ -5323,6 +5603,11 @@ class LabelingWidget(LabelDialog):
         self.actions.open_next_unchecked_image.setEnabled(True)
         self.actions.open_prev_unchecked_image.setEnabled(True)
         self.toggle_actions(True)
+
+        # Load labels from label_color.txt if it exists (for XML format)
+        if LabelFile.suffix == ".xml":
+            self._load_labels_from_label_color_file(dirpath)
+
         self.open_next_image(load=load)
 
         if image_files:
