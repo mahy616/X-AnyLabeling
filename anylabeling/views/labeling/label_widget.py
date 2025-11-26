@@ -2455,7 +2455,13 @@ class LabelingWidget(LabelDialog):
             logger.info(f"Filter result: {shown_count} shown, {hidden_count} hidden")
 
     def _check_file_has_label(self, filename, target_label):
-        """Check if the annotation file contains the target label"""
+        """Check if the annotation file contains the target label
+
+        Special filters:
+        - [OK]: Files with empty XML content (XML exists but is empty)
+        - [ignore]: Files with at least one empty <flags></flags> element
+        - [未标注]: Files without any annotation file (XML/JSON doesn't exist)
+        """
         if not filename or not self.last_open_dir:
             logger.debug(f"_check_file_has_label: filename or last_open_dir is empty")
             return False
@@ -2474,6 +2480,23 @@ class LabelingWidget(LabelDialog):
                 xml_file = xml_file_alt
 
         if osp.exists(xml_file):
+            # XML file exists - not unannotated
+            if target_label == "[未标注]":
+                return False
+
+            # Handle special filter: [OK] - empty XML content
+            if target_label == "[OK]":
+                is_ok = self._is_xml_empty_or_ok(xml_file)
+                logger.debug(f"XML {osp.basename(xml_file)}: is_ok={is_ok}")
+                return is_ok
+
+            # Handle special filter: [ignore] - has empty flags
+            if target_label == "[ignore]":
+                has_ignore = self._has_ignore_flags(xml_file)
+                logger.debug(f"XML {osp.basename(xml_file)}: has_ignore={has_ignore}")
+                return has_ignore
+
+            # Normal label filtering
             labels = self._load_labels_from_xml(xml_file)
             result = target_label in labels
             logger.debug(f"XML {osp.basename(xml_file)}: labels={labels}, has '{target_label}'={result}")
@@ -2489,13 +2512,111 @@ class LabelingWidget(LabelDialog):
                 json_file = json_file_alt
 
         if osp.exists(json_file):
+            # JSON file exists - not unannotated
+            if target_label == "[未标注]":
+                return False
+
+            # Handle special filter: [OK] - empty shapes
+            if target_label == "[OK]":
+                is_ok = self._is_json_empty_or_ok(json_file)
+                logger.debug(f"JSON {osp.basename(json_file)}: is_ok={is_ok}")
+                return is_ok
+
+            # JSON format doesn't have ignore concept, return False
+            if target_label == "[ignore]":
+                return False
+
+            # Normal label filtering
             labels = self._load_labels_from_json(json_file)
             result = target_label in labels
             logger.debug(f"JSON {osp.basename(json_file)}: labels={labels}, has '{target_label}'={result}")
             return result
 
+        # No annotation file found
         logger.debug(f"No annotation file found for {filename}")
+        # For [未标注] filter, files without annotation file match
+        if target_label == "[未标注]":
+            return True
+        # For other filters, no annotation means no match
         return False
+
+    def _is_xml_empty_or_ok(self, xml_file):
+        """Check if XML file is empty or represents an OK image (no defects)
+
+        An XML is considered OK if:
+        - File size is 0 (empty file)
+        - VisionMaster format: _ItemsData is empty or doesn't exist
+        - PASCAL VOC format: No object elements exist
+        """
+        import xml.etree.ElementTree as ET
+
+        try:
+            # Empty file
+            if osp.getsize(xml_file) == 0:
+                return True
+
+            tree = ET.parse(xml_file)
+            root = tree.getroot()
+
+            # Check for VisionMaster XML format
+            items_data = root.find("_ItemsData")
+            if items_data is not None:
+                # Check if _ItemsData is empty (no child elements)
+                if len(items_data) == 0:
+                    return True
+                return False
+            else:
+                # Standard PASCAL VOC format - check if there are any objects
+                objects = root.findall(".//object")
+                return len(objects) == 0
+
+        except Exception as e:
+            logger.warning(f"Error checking if XML is OK {xml_file}: {e}")
+            return False
+
+    def _has_ignore_flags(self, xml_file):
+        """Check if XML file contains at least one empty <flags></flags> element
+
+        This is specific to VisionMaster format where empty flags indicate
+        an area that should be ignored.
+        """
+        import xml.etree.ElementTree as ET
+
+        try:
+            # Handle empty XML files
+            if osp.getsize(xml_file) == 0:
+                return False
+
+            tree = ET.parse(xml_file)
+            root = tree.getroot()
+
+            # Check for VisionMaster XML format only
+            items_data = root.find("_ItemsData")
+            if items_data is not None:
+                # Look for any flags element that is empty or None
+                for flags_elem in items_data.iter("flags"):
+                    if not flags_elem.text or not flags_elem.text.strip():
+                        return True
+
+            return False
+
+        except Exception as e:
+            logger.warning(f"Error checking for ignore flags in XML {xml_file}: {e}")
+            return False
+
+    def _is_json_empty_or_ok(self, json_file):
+        """Check if JSON file represents an OK image (no shapes)"""
+        try:
+            with open(json_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            # Check if shapes list is empty or doesn't exist
+            shapes = data.get('shapes', [])
+            return len(shapes) == 0
+
+        except Exception as e:
+            logger.warning(f"Error checking if JSON is OK {json_file}: {e}")
+            return False
 
     def _load_labels_from_xml(self, xml_file):
         """Extract all labels from XML annotation file"""
@@ -4038,8 +4159,11 @@ class LabelingWidget(LabelDialog):
                 labels_list.append(str(label))
 
         unique_labels_list = list(set(labels_list))
-        # Add empty option for showing all files
-        unique_labels_list.append("")
+        # Add special filter options
+        unique_labels_list.append("")  # Empty option for showing all files
+        unique_labels_list.append("[OK]")  # OK images (empty XML content)
+        unique_labels_list.append("[ignore]")  # Ignore images (empty flags)
+        unique_labels_list.append("[未标注]")  # Unannotated images (no XML file)
         unique_labels_list.sort()
         self.unique_label_filter_combobox.update_items(unique_labels_list)
 
@@ -5568,6 +5692,9 @@ class LabelingWidget(LabelDialog):
 
         # Clear unique label list when loading new folder
         self.unique_label_list.clear()
+
+        # Clear label dialog history when loading new folder
+        self.label_dialog.label_list.clear()
 
         image_files = []
 
