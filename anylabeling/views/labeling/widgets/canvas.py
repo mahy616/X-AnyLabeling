@@ -1628,15 +1628,17 @@ class Canvas(
                         bbox = shape.bounding_rect()
                     except IndexError:
                         continue
+                    # Position label at bottom-right corner with 5px offset
+                    label_offset = 5
                     rect = QtCore.QRect(
-                        int(bbox.x()),
-                        int(bbox.y()),
+                        int(bbox.x() + bbox.width() + label_offset),
+                        int(bbox.y() + bbox.height() + label_offset),
                         rect_width,
                         rect_height,
                     )
                     text_pos = QtCore.QPoint(
-                        int(bbox.x() + padding_x),
-                        int(bbox.y() + rect_height - padding_y - fm.descent()),
+                        int(bbox.x() + bbox.width() + label_offset + padding_x),
+                        int(bbox.y() + bbox.height() + label_offset + rect_height - padding_y - fm.descent()),
                     )
                 elif shape.shape_type == "circle":
                     points = shape.points
@@ -1687,18 +1689,14 @@ class Canvas(
                     continue
                 labels.append((shape, rect, text_pos, label_text))
 
-            pen = QtGui.QPen(QtGui.QColor("#FFA500"), 8, Qt.SolidLine)
-            p.setPen(pen)
-            for shape, rect, _, _ in labels:
+            # Draw label text without background
+            # Text color matches shape color, positioned at bottom-right
+            for shape, _, text_pos, label_text in labels:
                 if not shape.visible:
                     continue
-                p.fillRect(rect, shape.line_color)
-
-            pen = QtGui.QPen(QtGui.QColor("#000000"), 8, Qt.SolidLine)
-            p.setPen(pen)
-            for _, _, text_pos, label_text in labels:
-                if not shape.visible:
-                    continue
+                # Use shape's line color for text
+                pen = QtGui.QPen(shape.line_color, 2, Qt.SolidLine)
+                p.setPen(pen)
                 p.drawText(text_pos, label_text)
 
         # Draw mouse coordinates
