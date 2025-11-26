@@ -2668,6 +2668,58 @@ class LabelingWidget(LabelDialog):
 
         return labels
 
+    def _has_actual_annotations(self, annotation_file):
+        """Check if annotation file has actual annotation content
+
+        Returns True if file has annotations, False if empty or doesn't exist.
+        This is used to determine the checkmark state in the file list.
+        """
+        if not osp.exists(annotation_file):
+            return False
+
+        # Check file extension
+        ext = osp.splitext(annotation_file)[1].lower()
+
+        if ext == '.xml':
+            # For XML, check if it has actual annotation data
+            try:
+                # Empty file
+                if osp.getsize(annotation_file) == 0:
+                    return False
+
+                import xml.etree.ElementTree as ET
+                tree = ET.parse(annotation_file)
+                root = tree.getroot()
+
+                # Check for VisionMaster XML format
+                items_data = root.find("_ItemsData")
+                if items_data is not None:
+                    # VisionMaster format - check if _ItemsData has children
+                    # Empty <_ItemsData /> means no annotations
+                    return len(items_data) > 0
+                else:
+                    # Standard PASCAL VOC format - check for objects
+                    objects = root.findall(".//object")
+                    return len(objects) > 0
+
+            except Exception as e:
+                logger.warning(f"Error checking XML annotations {annotation_file}: {e}")
+                return False
+
+        elif ext == '.json':
+            # For JSON, check if shapes array is not empty
+            try:
+                with open(annotation_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                shapes = data.get('shapes', [])
+                return len(shapes) > 0
+            except Exception as e:
+                logger.warning(f"Error checking JSON annotations {annotation_file}: {e}")
+                return False
+
+        # Unknown format, assume has annotation if file exists
+        return True
+
     def _load_labels_from_label_color_file(self, dirpath):
         """Load labels from label_color.txt file in the directory
         Format: ID label_name
@@ -5655,14 +5707,15 @@ class LabelingWidget(LabelDialog):
                 label_file_without_path = osp.basename(label_file)
                 label_file = self.output_dir + "/" + label_file_without_path
 
-            # Check current format first, then alternate
-            has_annotation = QtCore.QFile.exists(label_file)
+            # Check if file exists AND has actual annotations
+            has_annotation = self._has_actual_annotations(label_file)
             if not has_annotation:
+                # Check alternate format
                 alt_suffix = ".json" if LabelFile.suffix == ".xml" else ".xml"
                 alt_label_file = base_name + alt_suffix
                 if self.output_dir:
                     alt_label_file = self.output_dir + "/" + osp.basename(alt_label_file)
-                has_annotation = QtCore.QFile.exists(alt_label_file)
+                has_annotation = self._has_actual_annotations(alt_label_file)
 
             item = QtWidgets.QListWidgetItem(file)
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
@@ -5710,14 +5763,15 @@ class LabelingWidget(LabelDialog):
                 label_file_without_path = osp.basename(label_file)
                 label_file = self.output_dir + "/" + label_file_without_path
 
-            has_annotation = QtCore.QFile.exists(label_file)
+            # Check if file exists AND has actual annotations
+            has_annotation = self._has_actual_annotations(label_file)
             if not has_annotation:
                 # Check alternate format
                 alt_suffix = ".json" if LabelFile.suffix == ".xml" else ".xml"
                 alt_label_file = base_name + alt_suffix
                 if self.output_dir:
                     alt_label_file = self.output_dir + "/" + osp.basename(alt_label_file)
-                has_annotation = QtCore.QFile.exists(alt_label_file)
+                has_annotation = self._has_actual_annotations(alt_label_file)
 
             item = QtWidgets.QListWidgetItem(filename)
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
