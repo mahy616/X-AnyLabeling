@@ -23,7 +23,7 @@ class MainWindow(QMainWindow):
         self.config = config
 
         self.setContentsMargins(0, 0, 0, 0)
-        self.setWindowTitle(__appname__)
+        self.setWindowTitle(f"{__appname__} v{__version__}")
 
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(10, 10, 10, 10)

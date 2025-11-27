@@ -2779,6 +2779,10 @@ class LabelingWidget(LabelDialog):
                         item, label_name, rgb, LABEL_OPACITY
                     )
 
+                # Add label to label_dialog label list if not already present
+                if not self.label_dialog.label_list.findItems(label_name, QtCore.Qt.MatchExactly):
+                    self.label_dialog.add_label_history(label_name, update_last_label=False)
+
             # Update the filter combobox after loading labels
             self.update_unique_label_filter()
 
@@ -2840,8 +2844,8 @@ class LabelingWidget(LabelDialog):
                     logger.warning(f"Error reading existing label_color.txt: {e}")
 
             # Write updated file
-            # Filter out special labels (OK, 忽略, 未标注)
-            special_labels = ["[OK]", "[忽略]", "[未标注]", ""]
+            # Filter out special labels: "忽略" is used for difficult annotations
+            special_labels = ["忽略", ""]
 
             total_labels = self.unique_label_list.count()
             logger.info(f"[label_color.txt] Total labels in unique_label_list: {total_labels}")
@@ -4152,6 +4156,10 @@ class LabelingWidget(LabelDialog):
                     item, label, rgb, LABEL_OPACITY
                 )
 
+            # Add label to label_dialog label list if not already present
+            if not self.label_dialog.label_list.findItems(label, QtCore.Qt.MatchExactly):
+                self.label_dialog.add_label_history(label, update_last_label=False)
+
         # Update the file label filter combobox
         self.update_unique_label_filter()
 
@@ -4267,7 +4275,8 @@ class LabelingWidget(LabelDialog):
         for i in range(self.unique_label_list.count()):
             item = self.unique_label_list.item(i)
             label = item.data(Qt.UserRole)
-            if label:
+            # Filter out "忽略" since we have "[忽略]" filter option
+            if label and label != "忽略":
                 labels_list.append(str(label))
 
         unique_labels_list = list(set(labels_list))

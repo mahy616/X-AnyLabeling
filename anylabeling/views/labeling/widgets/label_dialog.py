@@ -1359,6 +1359,8 @@ class LabelDialog(QtWidgets.QDialog):
         # Add difficult checkbox
         self.edit_difficult = QtWidgets.QCheckBox(self.tr("useDifficult"))
         self.edit_difficult.setChecked(difficult)
+        # Connect signal: when difficult is checked, set label to "忽略"
+        self.edit_difficult.stateChanged.connect(self.on_difficult_changed)
 
         # Add linking input
         self.linking_input = QtWidgets.QLineEdit()
@@ -1642,6 +1644,12 @@ class LabelDialog(QtWidgets.QDialog):
 
     def get_difficult_state(self):
         return self.edit_difficult.isChecked()
+
+    def on_difficult_changed(self, state):
+        """When difficult checkbox is toggled, auto-set label to '忽略'"""
+        if state == QtCore.Qt.Checked:
+            self.edit.setText("忽略")
+        # Note: User will see "忽略" in UI, but VM format saves empty flags
 
     def get_kie_linking(self):
         kie_linking = []

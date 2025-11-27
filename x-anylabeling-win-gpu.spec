@@ -39,7 +39,7 @@ exe = EXE(
     a.binaries,
     a.zipfiles,
     a.datas,
-    name='IM-Label-GPU',
+    name='IMLabel',
     debug=False,
     strip=False,
     upx=False,

@@ -192,7 +192,9 @@ class LabelFile:
                     "VisionMaster.ModuleMainWindow.ModuleDialogNew.DeepLearning.FlawCoverRoiParameter"
                 ):
                     flags_elem = param.find("flags")
-                    label = flags_elem.text if flags_elem is not None and flags_elem.text else "ignore"
+                    # For VM format: empty flags → difficult=True, display as "忽略"
+                    has_flags = flags_elem is not None and flags_elem.text and flags_elem.text.strip()
+                    label = flags_elem.text if has_flags else "忽略"
 
                     visible_elem = param.find("_TIsVisible")
                     is_visible = visible_elem is not None and visible_elem.text == "True"
@@ -234,7 +236,7 @@ class LabelFile:
                             "points": points,
                             "group_id": None,
                             "description": "",
-                            "difficult": False,
+                            "difficult": not has_flags,  # Empty flags -> difficult=True
                             "attributes": {},
                         }
                         shape = Shape().load_from_dict(shape_dict)
@@ -245,7 +247,9 @@ class LabelFile:
                     "VisionMaster.ModuleMainWindow.ModuleDialogNew.DeepLearning.FlawPolygonRoiParameter"
                 ):
                     flags_elem = param.find("flags")
-                    label = flags_elem.text if flags_elem is not None and flags_elem.text else "ignore"
+                    # For VM format: empty flags → difficult=True, display as "忽略"
+                    has_flags = flags_elem is not None and flags_elem.text and flags_elem.text.strip()
+                    label = flags_elem.text if has_flags else "忽略"
 
                     visible_elem = param.find("_TIsVisible")
                     is_visible = visible_elem is not None and visible_elem.text == "True"
@@ -371,7 +375,8 @@ class LabelFile:
                 for shape in shapes:
                     shape_type = shape["shape_type"]
                     label = shape.get("label", "")
-                    is_ignore = label.lower() == "ignore"
+                    # For VM format: difficult=True → flags will be empty
+                    is_ignore = shape.get("difficult", False)
 
                     # Rectangle and Rotation -> FlawCoverRoiParameter
                     if shape_type in ["rectangle", "rotation"]:
