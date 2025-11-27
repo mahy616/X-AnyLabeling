@@ -30,7 +30,7 @@ exe = EXE(
     a.binaries,
     a.zipfiles,
     a.datas,
-    name='X-AnyLabeling-CPU',
+    name='IM-Label-CPU',
     debug=False,
     strip=False,
     upx=False,
@@ -40,7 +40,7 @@ exe = EXE(
 )
 app = BUNDLE(
     exe,
-    name='X-AnyLabeling.app',
+    name='IM-Label.app',
     icon='anylabeling/resources/images/icon.icns',
     bundle_identifier=None,
     info_plist={'NSHighResolutionCapable': 'True'},

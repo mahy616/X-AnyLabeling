@@ -1446,7 +1446,7 @@ class LabelingWidget(LabelDialog):
             self.toggle_ok_status,
             "K",  # Shortcut key
             "done",  # Use existing checkmark icon
-            self.tr("Mark current image as OK (no defects)"),
+            self.tr("Mark OK"),
             checkable=True,
             enabled=False,
         )
@@ -2467,7 +2467,7 @@ class LabelingWidget(LabelDialog):
 
         Special filters:
         - [OK]: Files with empty XML content (XML exists but is empty)
-        - [ignore]: Files with at least one empty <flags></flags> element
+        - [忽略]: Files with at least one empty <flags></flags> element
         - [未标注]: Files without any annotation file (XML/JSON doesn't exist)
         """
         if not filename or not self.last_open_dir:
@@ -2498,8 +2498,8 @@ class LabelingWidget(LabelDialog):
                 logger.debug(f"XML {osp.basename(xml_file)}: is_ok={is_ok}")
                 return is_ok
 
-            # Handle special filter: [ignore] - has empty flags
-            if target_label == "[ignore]":
+            # Handle special filter: [忽略] - has empty flags
+            if target_label == "[忽略]":
                 has_ignore = self._has_ignore_flags(xml_file)
                 logger.debug(f"XML {osp.basename(xml_file)}: has_ignore={has_ignore}")
                 return has_ignore
@@ -2531,7 +2531,7 @@ class LabelingWidget(LabelDialog):
                 return is_ok
 
             # JSON format doesn't have ignore concept, return False
-            if target_label == "[ignore]":
+            if target_label == "[忽略]":
                 return False
 
             # Normal label filtering
@@ -2840,8 +2840,8 @@ class LabelingWidget(LabelDialog):
                     logger.warning(f"Error reading existing label_color.txt: {e}")
 
             # Write updated file
-            # Filter out special labels (OK, ignore, 未标注)
-            special_labels = ["[OK]", "[ignore]", "[未标注]", ""]
+            # Filter out special labels (OK, 忽略, 未标注)
+            special_labels = ["[OK]", "[忽略]", "[未标注]", ""]
 
             total_labels = self.unique_label_list.count()
             logger.info(f"[label_color.txt] Total labels in unique_label_list: {total_labels}")
@@ -4068,6 +4068,20 @@ class LabelingWidget(LabelDialog):
             self.hide_attributes_panel()
 
     def add_label(self, shape, update_last_label=True):
+        # Check if current image is marked as OK
+        if hasattr(self, 'is_image_ok') and self.is_image_ok:
+            QMessageBox.warning(
+                self,
+                "无法添加标注",
+                "当前图片已标注为OK（无缺陷）。\n如需标注缺陷，请先取消OK标签。",
+                QMessageBox.Ok
+            )
+            # Remove the shape that was just added to canvas
+            if shape in self.canvas.shapes:
+                self.canvas.shapes.remove(shape)
+            self.canvas.update()
+            return
+
         if shape.group_id is None:
             text = shape.label
         else:
@@ -4220,7 +4234,11 @@ class LabelingWidget(LabelDialog):
         # Get the unique labels and add them to the Combobox.
         labels_list = []
         for item in self.label_list:
-            label = item.shape().label
+            shape = item.shape()
+            # Skip if shape is None (can happen during certain operations)
+            if shape is None:
+                continue
+            label = shape.label
             labels_list.append(str(label))
         unique_labels_list = list(set(labels_list))
 
@@ -4256,7 +4274,7 @@ class LabelingWidget(LabelDialog):
         # Add special filter options
         unique_labels_list.append("")  # Empty option for showing all files
         unique_labels_list.append("[OK]")  # OK images (empty XML content)
-        unique_labels_list.append("[ignore]")  # Ignore images (empty flags)
+        unique_labels_list.append("[忽略]")  # Ignore images (empty flags)
         unique_labels_list.append("[未标注]")  # Unannotated images (no XML file)
         unique_labels_list.sort()
         self.unique_label_filter_combobox.update_items(unique_labels_list)
