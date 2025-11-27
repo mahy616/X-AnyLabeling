@@ -359,11 +359,11 @@ class LabelFile:
             is_ok = flags and (flags.get("OK") or flags.get("ok"))
 
             if is_ok:
-                # Empty XML for OK images
-                calibrated = ET.SubElement(root, "_IsOKCalibrated")
-                calibrated.text = "False"
-                image_path_elem = ET.SubElement(root, "_ImagePath")
-                image_path_elem.text = image_path
+                # Create empty XML file for OK images
+                with open(filename, 'w', encoding='utf-8') as f:
+                    pass  # Create empty file
+                self.filename = filename
+                return
             else:
                 # Add shapes
                 items_data = ET.SubElement(root, "_ItemsData")

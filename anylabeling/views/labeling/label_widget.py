@@ -2327,6 +2327,14 @@ class LabelingWidget(LabelDialog):
                 label_file_without_path = osp.basename(label_file)
                 label_file = self.output_dir + "/" + label_file_without_path
             self.save_labels(label_file)
+
+            # Also save label_color.txt when auto-saving
+            if LabelFile.suffix == ".xml":
+                dirpath = osp.dirname(label_file)
+                if not dirpath:
+                    dirpath = "."
+                self._save_labels_to_label_color_file(dirpath)
+
             self.update_navigator_shapes()
             return
         self.dirty = True
@@ -2683,9 +2691,9 @@ class LabelingWidget(LabelDialog):
         if ext == '.xml':
             # For XML, check if it has actual annotation data
             try:
-                # Empty file
+                # Empty file means OK annotation (no defects)
                 if osp.getsize(annotation_file) == 0:
-                    return False
+                    return True  # Empty XML = OK annotation, should be marked as annotated
 
                 import xml.etree.ElementTree as ET
                 tree = ET.parse(annotation_file)
@@ -2787,9 +2795,25 @@ class LabelingWidget(LabelDialog):
         2 碰伤
         """
         if LabelFile.suffix != ".xml":
+            logger.info(f"[label_color.txt] Skip saving: not in XML mode (suffix={LabelFile.suffix})")
             return
 
         label_color_file = osp.join(dirpath, "label_color.txt")
+        logger.info(f"[label_color.txt] Attempting to save to: {label_color_file}")
+
+        # Check directory permissions
+        if not osp.exists(dirpath):
+            logger.warning(f"[label_color.txt] Directory does not exist: {dirpath}")
+            try:
+                os.makedirs(dirpath)
+                logger.info(f"[label_color.txt] Created directory: {dirpath}")
+            except Exception as e:
+                logger.error(f"[label_color.txt] Failed to create directory: {e}")
+                return
+
+        if not os.access(dirpath, os.W_OK):
+            logger.error(f"[label_color.txt] No write permission for directory: {dirpath}")
+            return
 
         try:
             # Read existing file to preserve IDs if they exist
@@ -2816,24 +2840,42 @@ class LabelingWidget(LabelDialog):
                     logger.warning(f"Error reading existing label_color.txt: {e}")
 
             # Write updated file
+            # Filter out special labels (OK, ignore, 未标注)
+            special_labels = ["[OK]", "[ignore]", "[未标注]", ""]
+
+            total_labels = self.unique_label_list.count()
+            logger.info(f"[label_color.txt] Total labels in unique_label_list: {total_labels}")
+
+            saved_count = 0
             with open(label_color_file, 'w', encoding='utf-8') as f:
-                for i in range(self.unique_label_list.count()):
+                for i in range(total_labels):
                     item = self.unique_label_list.item(i)
                     label_name = item.data(Qt.UserRole)
-                    if label_name:
-                        # Use existing ID if available, otherwise assign new ID
-                        if label_name in existing_labels:
-                            label_id = existing_labels[label_name]
-                        else:
-                            label_id = next_id
-                            next_id += 1
 
-                        f.write(f"{label_id} {label_name}\n")
+                    # Skip empty labels and special filter labels
+                    if not label_name or label_name in special_labels:
+                        continue
 
-            logger.info(f"Saved {self.unique_label_list.count()} labels to {label_color_file}")
+                    # Use existing ID if available, otherwise assign new ID
+                    if label_name in existing_labels:
+                        label_id = existing_labels[label_name]
+                    else:
+                        label_id = next_id
+                        next_id += 1
+
+                    f.write(f"{label_id} {label_name}\n")
+                    saved_count += 1
+
+            logger.info(f"[label_color.txt] ✓ Successfully saved {saved_count} labels to {label_color_file}")
+            # Show status message to user
+            if hasattr(self, 'status'):
+                self.status(f"Saved {saved_count} labels to label_color.txt")
 
         except Exception as e:
-            logger.error(f"Error saving label_color.txt to {dirpath}: {e}")
+            logger.error(f"[label_color.txt] Error saving to {dirpath}: {e}")
+            # Show error message to user
+            if hasattr(self, 'status'):
+                self.status(f"Error saving label_color.txt: {e}")
 
     def reset_attribute(self, text):
         # Skip validation for auto-labeling special constants
@@ -5436,6 +5478,17 @@ class LabelingWidget(LabelDialog):
         if filename and self.save_labels(filename):
             self.add_recent_file(filename)
             self.set_clean()
+            # Update label_color.txt when saving annotations
+            logger.info(f"[label_color.txt] _save_file called: filename={filename}, suffix={LabelFile.suffix}")
+            if LabelFile.suffix == ".xml":
+                # Save label_color.txt to the directory of the annotation file
+                dirpath = osp.dirname(filename)
+                if not dirpath:
+                    dirpath = "."  # Use current directory if dirname is empty
+                logger.info(f"[label_color.txt] Calling _save_labels_to_label_color_file with dirpath={dirpath}")
+                self._save_labels_to_label_color_file(dirpath)
+            else:
+                logger.info(f"[label_color.txt] Not in XML mode, skipping label_color.txt save")
 
     def close_file(self, _value=False):
         if not self.may_continue():
