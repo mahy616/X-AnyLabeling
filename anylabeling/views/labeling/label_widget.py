@@ -2416,6 +2416,11 @@ class LabelingWidget(LabelDialog):
         self.select_toggle_button.setChecked(False)
         self.select_toggle_button.setText(self.tr("Select"))
 
+        # Reset OK status when switching images
+        self.is_image_ok = False
+        if hasattr(self.canvas, 'is_image_ok'):
+            self.canvas.is_image_ok = False
+
     def toggle_select_all(self):
         if not self.canvas.shapes:
             if self.select_toggle_button.isChecked():

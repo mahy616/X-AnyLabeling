@@ -30,7 +30,7 @@ exe = EXE(
     a.binaries,
     a.zipfiles,
     a.datas,
-    name='IM-Label-CPU',
+    name='IMLabel',
     debug=False,
     strip=False,
     upx=False,

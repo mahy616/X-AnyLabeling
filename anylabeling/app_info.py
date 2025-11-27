@@ -1,6 +1,6 @@
 __appname__ = "IM-Label"
 __appdescription__ = "Advanced Auto Labeling Solution with Added Features"
-__version__ = "3.3.1"
+__version__ = "1.0.1"
 __url__ = "https://github.com/CVHub520/X-AnyLabeling"
 
 CLI_HELP_MSG = """
