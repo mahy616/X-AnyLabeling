@@ -4136,6 +4136,7 @@ class LabelingWidget(LabelDialog):
         label_list_item.setBackground(QtGui.QColor(*color, LABEL_OPACITY))
         self.update_combo_box()
         self.update_gid_box()
+        self.update_unique_label_filter()
 
     def load_labels(self, labels, clear_existing=True):
         """
