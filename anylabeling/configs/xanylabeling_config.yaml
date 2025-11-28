@@ -45,8 +45,8 @@ shape:
   select_line_color: [255, 255, 255, 255]
   select_fill_color: [0, 255, 0, 155]
   hvertex_fill_color: [255, 255, 255, 255]
-  point_size: 10
-  line_width: 4
+  point_size: 0.2
+  line_width: 1
 
 # main
 flag_dock:

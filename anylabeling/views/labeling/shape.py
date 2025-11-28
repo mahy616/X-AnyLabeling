@@ -316,7 +316,8 @@ class Shape:
 
     def draw_vertex(self, path, i, show_difficult=False):
         """Draw a vertex"""
-        d = self.point_size / self.scale
+        # Fixed screen size: max(1, 3/scale) keeps vertex at ~3 pixels on screen
+        d = max(1.0, 3.0 / self.scale)
         shape = self.point_type
         point = self.points[i]
         if i == self._highlight_index:
