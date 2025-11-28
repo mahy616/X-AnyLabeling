@@ -798,7 +798,7 @@ class Canvas(
                     # when the cursor moves over an object
                     if (
                         self.create_mode
-                        in ["rectangle", "rotation", "circle", "line", "point"]
+                        in ["rectangle", "rotation", "polygon", "circle", "line", "point"]
                         and not self.is_auto_labeling
                         and not self.current
                     ):
@@ -962,6 +962,14 @@ class Canvas(
         ):
             self.current.pop_point()
             self.finalise()
+            # [Feature] Automatically switch to editing mode after double-click to finish polygon
+            # This matches the behavior of other shape types (rectangle, rotation, etc.)
+            if (
+                self.create_mode in ["polygon", "linestrip"]
+                and not self.is_auto_labeling
+                and not self.current
+            ):
+                self.mode_changed.emit()
 
     def select_shapes(self, shapes):
         """Select some shapes"""
