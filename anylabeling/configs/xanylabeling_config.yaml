@@ -1,4 +1,5 @@
 language: zh_CN
+annotation_mode: vm_segmentation  # vm_segmentation, vm_detection
 model_hub: github  # github, modelscope
 device: null  # CPU, GPU
 auto_save: true

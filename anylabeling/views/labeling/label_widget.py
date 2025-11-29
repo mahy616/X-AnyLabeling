@@ -121,6 +121,12 @@ class LabelingWidget(LabelDialog):
         if config is None:
             config = get_config()
         self._config = config
+
+        # Set annotation mode for LabelFile
+        from .label_file import LabelFile as LF
+        annotation_mode = self._config.get("annotation_mode", "vm_segmentation")
+        LF.set_annotation_mode(annotation_mode)
+
         self.label_flags = self._config["label_flags"]
         self.label_loop_count = -1
         self.select_loop_count = -1
@@ -1093,6 +1099,22 @@ class LabelingWidget(LabelDialog):
             enabled=self._config["language"] != "zh_CN",
         )
 
+        # Annotation Modes
+        select_vm_segmentation_mode = action(
+            self.tr("VM Segmentation Mode"),
+            functools.partial(self.set_annotation_mode, "vm_segmentation"),
+            checkable=True,
+            checked=self._config.get("annotation_mode", "vm_segmentation") == "vm_segmentation",
+            enabled=self._config.get("annotation_mode", "vm_segmentation") != "vm_segmentation",
+        )
+        select_vm_detection_mode = action(
+            self.tr("VM Detection Mode"),
+            functools.partial(self.set_annotation_mode, "vm_detection"),
+            checkable=True,
+            checked=self._config.get("annotation_mode", "vm_segmentation") == "vm_detection",
+            enabled=self._config.get("annotation_mode", "vm_segmentation") != "vm_detection",
+        )
+
         # Upload
         upload_image_flags_file = action(
             self.tr("Upload Image Flags File"),
@@ -1668,6 +1690,7 @@ class LabelingWidget(LabelDialog):
             edit=self.menu(self.tr("Edit")),
             view=self.menu(self.tr("View")),
             language=self.menu(self.tr("Language")),
+            annotation_mode=self.menu(self.tr("Annotation Mode")),
             upload=self.menu(self.tr("Upload")),
             export=self.menu(self.tr("Export")),
             tool=self.menu(self.tr("Tool")),
@@ -1732,6 +1755,13 @@ class LabelingWidget(LabelDialog):
             (
                 select_lang_en,
                 select_lang_zh,
+            ),
+        )
+        utils.add_actions(
+            self.menus.annotation_mode,
+            (
+                select_vm_segmentation_mode,
+                select_vm_detection_mode,
             ),
         )
         utils.add_actions(
@@ -2209,6 +2239,24 @@ class LabelingWidget(LabelDialog):
         msg_box.exec_()
         self.parent.parent.close()
 
+    def set_annotation_mode(self, mode):
+        """Switch annotation mode between VM Segmentation and VM Detection"""
+        if self._config.get("annotation_mode", "vm_segmentation") == mode:
+            return
+        self._config["annotation_mode"] = mode
+
+        # Save config
+        from anylabeling.config import save_config
+        save_config(self._config)
+
+        # Show dialog to restart application
+        msg_box = QMessageBox()
+        msg_box.setText(
+            self.tr("Please restart the application to apply changes.")
+        )
+        msg_box.exec_()
+        self.parent.parent.close()
+
     def get_labeling_instruction(self):
         text_mode = self.tr("Mode:")
         text_shortcuts = self.tr("Shortcuts:")
@@ -2322,10 +2370,17 @@ class LabelingWidget(LabelDialog):
 
         if self._config["auto_save"]:
             from .label_file import LabelFile
-            label_file = osp.splitext(self.image_path)[0] + LabelFile.suffix
-            if self.output_dir:
-                label_file_without_path = osp.basename(label_file)
-                label_file = self.output_dir + "/" + label_file_without_path
+            # VM Detection mode uses DetectTrainData.txt
+            if LabelFile.suffix == ".txt":
+                if self.output_dir:
+                    label_file = osp.join(self.output_dir, "DetectTrainData.txt")
+                else:
+                    label_file = osp.join(osp.dirname(self.image_path), "DetectTrainData.txt")
+            else:
+                label_file = osp.splitext(self.image_path)[0] + LabelFile.suffix
+                if self.output_dir:
+                    label_file_without_path = osp.basename(label_file)
+                    label_file = self.output_dir + "/" + label_file_without_path
             self.save_labels(label_file)
 
             # Also save label_color.txt when auto-saving
@@ -4320,7 +4375,12 @@ class LabelingWidget(LabelDialog):
             flag = item.checkState() == Qt.Checked
             flags[key] = flag
         try:
-            image_path = osp.relpath(self.image_path, osp.dirname(filename))
+            # VM Detection mode uses basename only for image_path
+            if LabelFile.suffix == ".txt":
+                image_path = osp.basename(self.image_path)
+            else:
+                image_path = osp.relpath(self.image_path, osp.dirname(filename))
+
             image_data = (
                 self.image_data if self._config["store_data"] else None
             )
@@ -5015,19 +5075,30 @@ class LabelingWidget(LabelDialog):
 
         # Find annotation file with current format
         base_name = osp.splitext(filename)[0]
-        label_file = base_name + LabelFile.suffix
         image_dir = None
-        if self.output_dir:
-            image_dir = osp.dirname(filename)
-            label_file_without_path = osp.basename(label_file)
-            label_file = self.output_dir + "/" + label_file_without_path
+
+        # VM Detection mode uses DetectTrainData.txt for all images
+        if LabelFile.suffix == ".txt":
+            if self.output_dir:
+                image_dir = osp.dirname(filename)
+                label_file = osp.join(self.output_dir, "DetectTrainData.txt")
+            else:
+                image_dir = osp.dirname(filename)
+                label_file = osp.join(image_dir, "DetectTrainData.txt")
+        else:
+            # VM Segmentation mode uses per-image files
+            label_file = base_name + LabelFile.suffix
+            if self.output_dir:
+                image_dir = osp.dirname(filename)
+                label_file_without_path = osp.basename(label_file)
+                label_file = self.output_dir + "/" + label_file_without_path
 
         # Try current format first, then fallback to other format
         found_label = False
         if QtCore.QFile.exists(label_file):
             found_label = True
-        else:
-            # Try alternate format
+        elif LabelFile.suffix != ".txt":
+            # Try alternate format (only for non-detection mode)
             alt_suffix = ".json" if LabelFile.suffix == ".xml" else ".xml"
             alt_label_file = base_name + alt_suffix
             if self.output_dir:
@@ -5038,7 +5109,14 @@ class LabelingWidget(LabelDialog):
 
         if found_label and LabelFile.is_label_file(label_file):
             try:
-                self.label_file = LabelFile(label_file, image_dir)
+                if LabelFile.suffix == ".txt":
+                    # VM Detection mode: load specific image from DetectTrainData.txt
+                    self.label_file = LabelFile(image_dir=image_dir)
+                    image_name = osp.basename(filename)
+                    self.label_file.load_vm_detection_for_image(label_file, image_name)
+                else:
+                    # VM Segmentation mode: load per-image file
+                    self.label_file = LabelFile(label_file, image_dir)
             except LabelFileError as e:
                 self.error_message(
                     self.tr("Error opening file"),

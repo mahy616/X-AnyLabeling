@@ -22,7 +22,8 @@ class LabelFileError(Exception):
 
 
 class LabelFile:
-    suffix = ".xml"  # Default to VisionMaster format
+    suffix = ".xml"  # Default to VisionMaster Segmentation format
+    annotation_mode = "vm_segmentation"  # vm_segmentation or vm_detection
 
     def __init__(self, filename=None, image_dir=None):
         self.shapes = []
@@ -32,6 +33,15 @@ class LabelFile:
         if filename is not None:
             self.load(filename)
         self.filename = filename
+
+    @classmethod
+    def set_annotation_mode(cls, mode):
+        """Set annotation mode: vm_segmentation or vm_detection"""
+        cls.annotation_mode = mode
+        if mode == "vm_detection":
+            cls.suffix = ".txt"  # VM Detection uses DetectTrainData.txt
+        else:
+            cls.suffix = ".xml"  # VM Segmentation uses .xml
 
     @staticmethod
     def _check_image_height_and_width(image_data, image_height, image_width):
@@ -53,7 +63,8 @@ class LabelFile:
     @staticmethod
     def is_label_file(filename):
         ext = osp.splitext(filename)[1].lower()
-        return ext in [".xml", ".json"]  # Support both VisionMaster and JSON formats
+        # Support VisionMaster Segmentation (.xml), JSON, and VM Detection (.txt)
+        return ext in [".xml", ".json", ".txt"]
 
     @staticmethod
     def load_image_file(filename, default=None):
@@ -68,6 +79,8 @@ class LabelFile:
         ext = osp.splitext(filename)[1].lower()
         if ext == ".xml":
             self._load_xml(filename)
+        elif ext == ".txt":
+            self._load_vm_detection(filename)
         else:
             self._load_json(filename)
 
@@ -287,6 +300,135 @@ class LabelFile:
         except Exception as e:
             raise LabelFileError(e) from e
 
+    def _load_vm_detection(self, filename):
+        """Load VisionMaster Detection format (DetectTrainData.txt)
+        Format: imagename:count R:4 x1 y1 x2 y2 x3 y3 x4 y4 "label" ...
+        Note: This method is called when loading individual image annotation.
+        We need to parse the DetectTrainData.txt file and extract this image's annotation.
+        """
+        try:
+            # Get the base name of current image from filename
+            # filename could be like: path/to/DetectTrainData.txt
+            # We need image_dir to get the actual image
+            if not self.image_dir:
+                raise LabelFileError("image_dir is required for VM Detection format")
+
+            # Read DetectTrainData.txt file
+            if not osp.exists(filename):
+                # Empty detection file
+                self.flags = {}
+                self.shapes = []
+                self.image_path = None
+                self.image_data = None
+                self.filename = filename
+                self.other_data = {"description": ""}
+                return
+
+            with open(filename, 'r', encoding='utf-8-sig') as f:
+                lines = f.readlines()
+
+            # Skip version line
+            lines = [line.strip() for line in lines[1:] if line.strip()]
+
+            # For now, we don't know which image we're loading
+            # This will be set by the caller
+            self.flags = {}
+            self.shapes = []
+            self.image_path = None
+            self.image_data = None
+            self.filename = filename
+            self.other_data = {"description": ""}
+
+        except Exception as e:
+            raise LabelFileError(e) from e
+
+    def load_vm_detection_for_image(self, detect_file, image_name):
+        """Load VM Detection annotations for a specific image"""
+        try:
+            if not osp.exists(detect_file):
+                self.flags = {}
+                self.shapes = []
+                self.image_path = image_name
+                if self.image_dir:
+                    full_image_path = osp.join(self.image_dir, image_name)
+                    self.image_data = self.load_image_file(full_image_path)
+                else:
+                    self.image_data = None
+                self.filename = detect_file
+                self.other_data = {"description": ""}
+                return
+
+            with open(detect_file, 'r', encoding='utf-8-sig') as f:
+                lines = f.readlines()
+
+            # Skip version line and parse annotations
+            shapes = []
+            for line in lines[1:]:
+                line = line.strip()
+                if not line:
+                    continue
+
+                # Parse: imagename:count R:4 x1 y1 ... "label" ...
+                if ':' not in line:
+                    continue
+
+                parts = line.split(':', 1)
+                img_name = parts[0].strip()
+
+                if img_name != image_name:
+                    continue
+
+                # Found the line for this image
+                annotation_str = parts[1].strip()
+                # Skip the count part
+                if ' ' in annotation_str:
+                    annotation_str = annotation_str.split(' ', 1)[1]
+
+                # Parse R:4 x1 y1 x2 y2 x3 y3 x4 y4 "label"
+                import re
+                pattern = r'R:4\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+"([^"]+)"'
+                matches = re.finditer(pattern, annotation_str)
+
+                for match in matches:
+                    x1, y1, x2, y2, x3, y3, x4, y4, label = match.groups()
+                    points = [
+                        [float(x1), float(y1)],
+                        [float(x2), float(y2)],
+                        [float(x3), float(y3)],
+                        [float(x4), float(y4)]
+                    ]
+
+                    shape_dict = {
+                        "label": label,
+                        "shape_type": "rotation",
+                        "flags": {},
+                        "points": points,
+                        "group_id": None,
+                        "description": "",
+                        "difficult": False,
+                        "attributes": {},
+                    }
+                    shape = Shape().load_from_dict(shape_dict)
+                    shapes.append(shape)
+
+                break
+
+            # Load image data
+            self.image_path = image_name
+            if self.image_dir:
+                full_image_path = osp.join(self.image_dir, image_name)
+                self.image_data = self.load_image_file(full_image_path)
+            else:
+                self.image_data = None
+
+            self.flags = {}
+            self.shapes = shapes
+            self.filename = detect_file
+            self.other_data = {"description": ""}
+
+        except Exception as e:
+            raise LabelFileError(e) from e
+
     def save(
         self,
         filename=None,
@@ -301,6 +443,8 @@ class LabelFile:
         ext = osp.splitext(filename)[1].lower()
         if ext == ".xml":
             self._save_xml(filename, shapes, image_path, flags)
+        elif ext == ".txt":
+            self._save_vm_detection(filename, shapes, image_path)
         else:
             self._save_json(filename, shapes, image_path, image_height,
                           image_width, image_data, other_data, flags)
@@ -484,6 +628,63 @@ class LabelFile:
             content = content.replace('encoding="utf-8"', 'encoding="utf-8" ')
             with open(filename, "w", encoding="utf-8") as f:
                 f.write(content)
+
+            self.filename = filename
+        except Exception as e:
+            raise LabelFileError(e) from e
+
+    def _save_vm_detection(self, filename, shapes, image_path):
+        """Save as VisionMaster Detection format (DetectTrainData.txt)
+        Format: imagename:count R:4 x1 y1 x2 y2 x3 y3 x4 y4 "label" ...
+        All images are saved in one file.
+        """
+        try:
+            # Read existing file if it exists
+            existing_data = {}
+            if osp.exists(filename):
+                with open(filename, 'r', encoding='utf-8-sig') as f:
+                    lines = f.readlines()
+
+                # Parse existing annotations (skip version line)
+                for line in lines[1:]:
+                    line = line.strip()
+                    if not line or ':' not in line:
+                        continue
+                    img_name = line.split(':', 1)[0].strip()
+                    existing_data[img_name] = line
+
+            # Build annotation line for current image
+            if shapes:
+                count = len(shapes)
+                annotations = []
+                for shape in shapes:
+                    if shape["shape_type"] not in ["rectangle", "rotation"]:
+                        continue  # VM Detection only supports rectangles
+
+                    points = shape["points"]
+                    if len(points) != 4:
+                        continue
+
+                    label = shape.get("label", "")
+                    # Format: R:4 x1 y1 x2 y2 x3 y3 x4 y4 "label"
+                    coords = ' '.join([f"{int(p[0])} {int(p[1])}" for p in points])
+                    annotations.append(f'R:4 {coords} "{label}"')
+
+                if annotations:
+                    line = f'{image_path}:{count} {" ".join(annotations)}'
+                    existing_data[image_path] = line
+                else:
+                    # No valid shapes, remove this image's line
+                    existing_data.pop(image_path, None)
+            else:
+                # No shapes, remove this image's line
+                existing_data.pop(image_path, None)
+
+            # Write back to file
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write('Version 1.0.0\n')
+                for img_name in sorted(existing_data.keys()):
+                    f.write(existing_data[img_name] + '\n')
 
             self.filename = filename
         except Exception as e:
