@@ -2495,18 +2495,13 @@ class LabelingWidget(LabelDialog):
         """Filter file list by selected label from unique_label_list"""
         selected_label = self.unique_label_filter_combobox.text_box.itemText(index)
 
-        logger.info(f"Filter changed: selected label = '{selected_label}'")
-
         if not selected_label:
             # Empty selection means show all files
             for i in range(self.file_list_widget.count()):
                 item = self.file_list_widget.item(i)
                 item.setHidden(False)
-            logger.info(f"Showing all {self.file_list_widget.count()} files")
         else:
             # Filter files by label
-            shown_count = 0
-            hidden_count = 0
             for i in range(self.file_list_widget.count()):
                 item = self.file_list_widget.item(i)
                 filename = item.text()
@@ -2515,24 +2510,20 @@ class LabelingWidget(LabelDialog):
                 has_label = self._check_file_has_label(filename, selected_label)
                 item.setHidden(not has_label)
 
-                if has_label:
-                    shown_count += 1
-                else:
-                    hidden_count += 1
-
-            logger.info(f"Filter result: {shown_count} shown, {hidden_count} hidden")
-
     def _check_file_has_label(self, filename, target_label):
         """Check if the annotation file contains the target label
 
         Special filters:
-        - [OK]: Files with empty XML content (XML exists but is empty)
-        - [忽略]: Files with at least one empty <flags></flags> element
-        - [未标注]: Files without any annotation file (XML/JSON doesn't exist)
+        - [OK]: Files with empty XML content (XML exists but is empty) - XML/JSON only
+        - [忽略]: Files with at least one empty <flags></flags> element - XML only
+        - [未标注]: Files without any annotation file (XML/JSON/TXT doesn't exist)
         """
         if not filename or not self.last_open_dir:
-            logger.debug(f"_check_file_has_label: filename or last_open_dir is empty")
             return False
+
+        # VM Detection mode uses TXT format
+        if LabelFile.suffix == ".txt":
+            return self._check_file_has_label_txt(filename, target_label)
 
         # Get full file path
         file_path = osp.join(self.last_open_dir, filename)
@@ -2607,6 +2598,47 @@ class LabelingWidget(LabelDialog):
             return True
         # For other filters, no annotation means no match
         return False
+
+    def _check_file_has_label_txt(self, filename, target_label):
+        """Check if the annotation file contains the target label for VM Detection mode (TXT format)
+
+        VM Detection mode special filters:
+        - [未标注]: Files not present in DetectTrainData.txt
+        - [OK] and [忽略]: NOT supported in VM Detection mode
+
+        Args:
+            filename: Image filename to check (can be full path or basename)
+            target_label: Label to filter by
+
+        Returns:
+            bool: True if file matches the filter
+        """
+        # Extract basename from filename (DetectTrainData.txt uses basename only)
+        image_name = osp.basename(filename)
+
+        # VM Detection doesn't support [OK] and [忽略] filters
+        if target_label in ["[OK]", "[忽略]"]:
+            return False
+
+        # Get DetectTrainData.txt path
+        if self.output_dir:
+            detect_file = osp.join(self.output_dir, "DetectTrainData.txt")
+        else:
+            detect_file = osp.join(self.last_open_dir, "DetectTrainData.txt")
+
+        # Check if file exists
+        if not osp.exists(detect_file):
+            # If no detect file exists, all images are unannotated
+            return target_label == "[未标注]"
+
+        # Check [未标注] filter: image NOT in DetectTrainData.txt
+        if target_label == "[未标注]":
+            exists = self._image_exists_in_detect_file(detect_file, image_name)
+            return not exists
+
+        # Normal label filtering: check if image has this label
+        labels = self._load_labels_from_detect_file(detect_file, image_name)
+        return target_label in labels
 
     def _is_xml_empty_or_ok(self, xml_file):
         """Check if XML file is empty or represents an OK image (no defects)
@@ -2736,17 +2768,106 @@ class LabelingWidget(LabelDialog):
 
         return labels
 
-    def _has_actual_annotations(self, annotation_file):
+    def _load_labels_from_detect_file(self, detect_file, image_name):
+        """Extract all labels for a specific image from DetectTrainData.txt
+
+        Args:
+            detect_file: Path to DetectTrainData.txt
+            image_name: Image filename to look for
+
+        Returns:
+            set: Set of labels found for this image
+        """
+        labels = set()
+
+        try:
+            with open(detect_file, 'r', encoding='utf-8-sig') as f:
+                lines = f.readlines()
+
+            # Parse file (skip version line)
+            for line in lines[1:]:
+                line = line.strip()
+                if not line or ':' not in line:
+                    continue
+
+                # Format: imagename:count R:4 x1 y1 x2 y2 x3 y3 x4 y4 "label" ...
+                parts = line.split(':', 1)
+                img_name = parts[0].strip()
+
+                # Check if this is the target image
+                if img_name != image_name:
+                    continue
+
+                # Extract labels using regex
+                import re
+                # Pattern to match: "label" (labels are in quotes)
+                pattern = r'"([^"]+)"'
+                matches = re.findall(pattern, parts[1])
+                labels.update(matches)
+                break  # Found the image, no need to continue
+
+        except Exception as e:
+            logger.warning(f"Error loading labels from DetectTrainData.txt {detect_file}: {e}")
+
+        return labels
+
+    def _image_exists_in_detect_file(self, detect_file, image_name):
+        """Check if an image exists in DetectTrainData.txt
+
+        Args:
+            detect_file: Path to DetectTrainData.txt
+            image_name: Image filename to look for
+
+        Returns:
+            bool: True if image is found in the file
+        """
+        try:
+            with open(detect_file, 'r', encoding='utf-8-sig') as f:
+                lines = f.readlines()
+
+            # Parse file (skip version line)
+            for line in lines[1:]:
+                line = line.strip()
+                if not line or ':' not in line:
+                    continue
+
+                # Format: imagename:count ...
+                img_name = line.split(':', 1)[0].strip()
+                if img_name == image_name:
+                    return True
+
+            return False
+
+        except Exception as e:
+            logger.warning(f"Error checking image in DetectTrainData.txt {detect_file}: {e}")
+            return False
+
+    def _has_actual_annotations(self, annotation_file, image_name=None):
         """Check if annotation file has actual annotation content
 
         Returns True if file has annotations, False if empty or doesn't exist.
         This is used to determine the checkmark state in the file list.
-        """
-        if not osp.exists(annotation_file):
-            return False
 
+        Args:
+            annotation_file: Path to annotation file (XML/JSON/TXT)
+            image_name: Image filename (required for TXT format)
+        """
         # Check file extension
         ext = osp.splitext(annotation_file)[1].lower()
+
+        # TXT format (VM Detection): Check if image exists in DetectTrainData.txt
+        if ext == '.txt':
+            # Extract basename from image_name (DetectTrainData.txt uses basename only)
+            basename = osp.basename(image_name) if image_name else None
+            if not basename:
+                return False
+            if not osp.exists(annotation_file):
+                return False
+            return self._image_exists_in_detect_file(annotation_file, basename)
+
+        # For XML/JSON, file must exist
+        if not osp.exists(annotation_file):
+            return False
 
         if ext == '.xml':
             # For XML, check if it has actual annotation data
@@ -2799,7 +2920,6 @@ class LabelingWidget(LabelDialog):
         label_color_file = osp.join(dirpath, "label_color.txt")
 
         if not osp.exists(label_color_file):
-            logger.info(f"label_color.txt not found in {dirpath}")
             return
 
         try:
@@ -2846,8 +2966,6 @@ class LabelingWidget(LabelDialog):
             # Update the filter combobox after loading labels
             self.update_unique_label_filter()
 
-            logger.info(f"Loaded {self.unique_label_list.count()} labels from {label_color_file}")
-
         except Exception as e:
             logger.error(f"Error loading label_color.txt from {dirpath}: {e}")
 
@@ -2859,18 +2977,15 @@ class LabelingWidget(LabelDialog):
         2 碰伤
         """
         if LabelFile.suffix != ".xml":
-            logger.info(f"[label_color.txt] Skip saving: not in XML mode (suffix={LabelFile.suffix})")
             return
 
         label_color_file = osp.join(dirpath, "label_color.txt")
-        logger.info(f"[label_color.txt] Attempting to save to: {label_color_file}")
 
         # Check directory permissions
         if not osp.exists(dirpath):
             logger.warning(f"[label_color.txt] Directory does not exist: {dirpath}")
             try:
                 os.makedirs(dirpath)
-                logger.info(f"[label_color.txt] Created directory: {dirpath}")
             except Exception as e:
                 logger.error(f"[label_color.txt] Failed to create directory: {e}")
                 return
@@ -2908,9 +3023,7 @@ class LabelingWidget(LabelDialog):
             special_labels = ["忽略", ""]
 
             total_labels = self.unique_label_list.count()
-            logger.info(f"[label_color.txt] Total labels in unique_label_list: {total_labels}")
 
-            saved_count = 0
             with open(label_color_file, 'w', encoding='utf-8') as f:
                 for i in range(total_labels):
                     item = self.unique_label_list.item(i)
@@ -2928,12 +3041,6 @@ class LabelingWidget(LabelDialog):
                         next_id += 1
 
                     f.write(f"{label_id} {label_name}\n")
-                    saved_count += 1
-
-            logger.info(f"[label_color.txt] ✓ Successfully saved {saved_count} labels to {label_color_file}")
-            # Show status message to user
-            if hasattr(self, 'status'):
-                self.status(f"Saved {saved_count} labels to label_color.txt")
 
         except Exception as e:
             logger.error(f"[label_color.txt] Error saving to {dirpath}: {e}")
@@ -4336,16 +4443,26 @@ class LabelingWidget(LabelDialog):
         for i in range(self.unique_label_list.count()):
             item = self.unique_label_list.item(i)
             label = item.data(Qt.UserRole)
-            # Filter out "忽略" since we have "[忽略]" filter option
+            # Filter out "忽略" since we have "[忽略]" filter option (XML mode only)
             if label and label != "忽略":
                 labels_list.append(str(label))
 
         unique_labels_list = list(set(labels_list))
-        # Add special filter options
+        # Add special filter options based on annotation mode
         unique_labels_list.append("")  # Empty option for showing all files
-        unique_labels_list.append("[OK]")  # OK images (empty XML content)
-        unique_labels_list.append("[忽略]")  # Ignore images (empty flags)
-        unique_labels_list.append("[未标注]")  # Unannotated images (no XML file)
+
+        # VM Detection mode (.txt): Only support [未标注] filter
+        # VM Segmentation mode (.xml) and JSON mode: Support all special filters
+        if LabelFile.suffix == ".txt":
+            # VM Detection mode - only [未标注]
+            unique_labels_list.append("[未标注]")  # Unannotated images (not in DetectTrainData.txt)
+        else:
+            # VM Segmentation/JSON mode - support OK, 忽略, 未标注
+            unique_labels_list.append("[OK]")  # OK images (empty XML/JSON content)
+            if LabelFile.suffix == ".xml":
+                unique_labels_list.append("[忽略]")  # Ignore images (empty flags) - XML only
+            unique_labels_list.append("[未标注]")  # Unannotated images (no XML/JSON file)
+
         unique_labels_list.sort()
         self.unique_label_filter_combobox.update_items(unique_labels_list)
 
@@ -5590,16 +5707,12 @@ class LabelingWidget(LabelDialog):
             self.add_recent_file(filename)
             self.set_clean()
             # Update label_color.txt when saving annotations
-            logger.info(f"[label_color.txt] _save_file called: filename={filename}, suffix={LabelFile.suffix}")
             if LabelFile.suffix == ".xml":
                 # Save label_color.txt to the directory of the annotation file
                 dirpath = osp.dirname(filename)
                 if not dirpath:
                     dirpath = "."  # Use current directory if dirname is empty
-                logger.info(f"[label_color.txt] Calling _save_labels_to_label_color_file with dirpath={dirpath}")
                 self._save_labels_to_label_color_file(dirpath)
-            else:
-                logger.info(f"[label_color.txt] Not in XML mode, skipping label_color.txt save")
 
     def close_file(self, _value=False):
         if not self.may_continue():
@@ -5655,7 +5768,6 @@ class LabelingWidget(LabelDialog):
         label_file = self.get_label_file()
         if osp.exists(label_file):
             os.remove(label_file)
-            logger.info(f"Label file is removed: {label_file}")
 
             item = self.file_list_widget.currentItem()
             item.setCheckState(Qt.Unchecked)
@@ -5697,7 +5809,6 @@ class LabelingWidget(LabelDialog):
             os.makedirs(save_path, exist_ok=True)
             save_file = osp.join(save_path, image_name)
             shutil.move(image_file, save_file)
-            logger.info(f"Image file is moved to: {osp.realpath(save_file)}")
 
             label_dir_path = osp.dirname(self.filename)
             if self.output_dir:
@@ -5716,7 +5827,6 @@ class LabelingWidget(LabelDialog):
                     break
             if label_file and osp.exists(label_file):
                 os.remove(label_file)
-                logger.info(f"Label file is removed: {image_file}")
 
             filename = None
             if self.filename is None:
@@ -5866,20 +5976,30 @@ class LabelingWidget(LabelDialog):
                 continue
             valid_files.append(file)
             base_name = osp.splitext(file)[0]
-            label_file = base_name + LabelFile.suffix
-            if self.output_dir:
-                label_file_without_path = osp.basename(label_file)
-                label_file = self.output_dir + "/" + label_file_without_path
 
             # Check if file exists AND has actual annotations
-            has_annotation = self._has_actual_annotations(label_file)
-            if not has_annotation:
-                # Check alternate format
-                alt_suffix = ".json" if LabelFile.suffix == ".xml" else ".xml"
-                alt_label_file = base_name + alt_suffix
+            # VM Detection mode (.txt): Use shared DetectTrainData.txt
+            if LabelFile.suffix == ".txt":
                 if self.output_dir:
-                    alt_label_file = self.output_dir + "/" + osp.basename(alt_label_file)
-                has_annotation = self._has_actual_annotations(alt_label_file)
+                    label_file = osp.join(self.output_dir, "DetectTrainData.txt")
+                else:
+                    label_file = osp.join(osp.dirname(file), "DetectTrainData.txt")
+                has_annotation = self._has_actual_annotations(label_file, osp.basename(file))
+            else:
+                # VM Segmentation/JSON mode: Use per-image files (original logic)
+                label_file = base_name + LabelFile.suffix
+                if self.output_dir:
+                    label_file_without_path = osp.basename(label_file)
+                    label_file = self.output_dir + "/" + label_file_without_path
+
+                has_annotation = self._has_actual_annotations(label_file)
+                if not has_annotation:
+                    # Check alternate format
+                    alt_suffix = ".json" if LabelFile.suffix == ".xml" else ".xml"
+                    alt_label_file = base_name + alt_suffix
+                    if self.output_dir:
+                        alt_label_file = self.output_dir + "/" + osp.basename(alt_label_file)
+                    has_annotation = self._has_actual_annotations(alt_label_file)
 
             item = QtWidgets.QListWidgetItem(file)
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
@@ -5922,20 +6042,30 @@ class LabelingWidget(LabelDialog):
 
             # Check for annotation file in current format or alternate format
             base_name = osp.splitext(filename)[0]
-            label_file = base_name + LabelFile.suffix
-            if self.output_dir:
-                label_file_without_path = osp.basename(label_file)
-                label_file = self.output_dir + "/" + label_file_without_path
 
             # Check if file exists AND has actual annotations
-            has_annotation = self._has_actual_annotations(label_file)
-            if not has_annotation:
-                # Check alternate format
-                alt_suffix = ".json" if LabelFile.suffix == ".xml" else ".xml"
-                alt_label_file = base_name + alt_suffix
+            # VM Detection mode (.txt): Use shared DetectTrainData.txt
+            if LabelFile.suffix == ".txt":
                 if self.output_dir:
-                    alt_label_file = self.output_dir + "/" + osp.basename(alt_label_file)
-                has_annotation = self._has_actual_annotations(alt_label_file)
+                    label_file = osp.join(self.output_dir, "DetectTrainData.txt")
+                else:
+                    label_file = osp.join(dirpath, "DetectTrainData.txt")
+                has_annotation = self._has_actual_annotations(label_file, filename)
+            else:
+                # VM Segmentation/JSON mode: Use per-image files (original logic)
+                label_file = base_name + LabelFile.suffix
+                if self.output_dir:
+                    label_file_without_path = osp.basename(label_file)
+                    label_file = self.output_dir + "/" + label_file_without_path
+
+                has_annotation = self._has_actual_annotations(label_file)
+                if not has_annotation:
+                    # Check alternate format
+                    alt_suffix = ".json" if LabelFile.suffix == ".xml" else ".xml"
+                    alt_label_file = base_name + alt_suffix
+                    if self.output_dir:
+                        alt_label_file = self.output_dir + "/" + osp.basename(alt_label_file)
+                    has_annotation = self._has_actual_annotations(alt_label_file)
 
             item = QtWidgets.QListWidgetItem(filename)
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
