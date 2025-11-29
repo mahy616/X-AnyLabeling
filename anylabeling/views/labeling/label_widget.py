@@ -2969,6 +2969,68 @@ class LabelingWidget(LabelDialog):
         except Exception as e:
             logger.error(f"Error loading label_color.txt from {dirpath}: {e}")
 
+    def _load_labels_from_detect_file_all(self, dirpath):
+        """Load all labels from DetectTrainData.txt file in the directory
+
+        This method extracts all unique labels from all images in DetectTrainData.txt
+        and loads them into the unique_label_list.
+
+        Args:
+            dirpath: Directory path containing DetectTrainData.txt
+        """
+        detect_file = osp.join(dirpath, "DetectTrainData.txt")
+
+        if not osp.exists(detect_file):
+            return
+
+        try:
+            import re
+
+            with open(detect_file, 'r', encoding='utf-8-sig') as f:
+                lines = f.readlines()
+
+            all_labels = set()
+
+            # Skip version line and parse all annotations
+            for line in lines[1:]:
+                line = line.strip()
+                if not line or ':' not in line:
+                    continue
+
+                # Format: imagename:count R:4 x1 y1 x2 y2 x3 y3 x4 y4 "label" ...
+                parts = line.split(':', 1)
+                if len(parts) < 2:
+                    continue
+
+                # Extract all labels (text in quotes) using regex
+                pattern = r'"([^"]+)"'
+                matches = re.findall(pattern, parts[1])
+                all_labels.update(matches)
+
+            # Load labels into unique_label_list
+            for label_name in sorted(all_labels):
+                # Add label to unique_label_list if not already present
+                if not self.unique_label_list.find_items_by_label(label_name):
+                    item = self.unique_label_list.create_item_from_label(label_name)
+                    self.unique_label_list.addItem(item)
+
+                    # Get color based on label
+                    rgb = self._get_rgb_by_label(label_name)
+
+                    self.unique_label_list.set_item_label(
+                        item, label_name, rgb, LABEL_OPACITY
+                    )
+
+                # Add label to label_dialog label list if not already present
+                if not self.label_dialog.label_list.findItems(label_name, QtCore.Qt.MatchExactly):
+                    self.label_dialog.add_label_history(label_name, update_last_label=False)
+
+            # Update the filter combobox after loading labels
+            self.update_unique_label_filter()
+
+        except Exception as e:
+            logger.error(f"Error loading labels from DetectTrainData.txt in {dirpath}: {e}")
+
     def _update_label_color_from_annotations(self, dirpath):
         """Scan all annotation files and update label_color.txt with actually used labels
 
@@ -6171,6 +6233,10 @@ class LabelingWidget(LabelDialog):
         # Load labels from label_color.txt if it exists (for XML format)
         if LabelFile.suffix == ".xml":
             self._load_labels_from_label_color_file(dirpath)
+
+        # Load labels from DetectTrainData.txt if it exists (for TXT format - VM Detection)
+        if LabelFile.suffix == ".txt":
+            self._load_labels_from_detect_file_all(dirpath)
 
         self.open_next_image(load=load)
 
