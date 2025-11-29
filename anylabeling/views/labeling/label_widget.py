@@ -2969,6 +2969,90 @@ class LabelingWidget(LabelDialog):
         except Exception as e:
             logger.error(f"Error loading label_color.txt from {dirpath}: {e}")
 
+    def _update_label_color_from_annotations(self, dirpath):
+        """Scan all annotation files and update label_color.txt with actually used labels
+
+        This method is called when opening a folder to ensure label_color.txt
+        only contains labels that are actually used in annotations.
+
+        Args:
+            dirpath: Directory path containing annotation files
+        """
+        from .label_file import LabelFile
+        import re
+
+        # Only for XML mode (VM Segmentation)
+        if LabelFile.suffix != ".xml":
+            return
+
+        used_labels = set()
+
+        try:
+            # Scan all XML files in the directory
+            if not osp.exists(dirpath):
+                return
+
+            for filename in os.listdir(dirpath):
+                if not filename.endswith('.xml'):
+                    continue
+
+                xml_file = osp.join(dirpath, filename)
+                try:
+                    # Extract labels from XML file
+                    labels = self._load_labels_from_xml(xml_file)
+                    used_labels.update(labels)
+                except Exception as e:
+                    logger.warning(f"Error reading {xml_file}: {e}")
+                    continue
+
+            # Now update label_color.txt with only used labels
+            # Read existing label IDs to preserve them
+            label_color_file = osp.join(dirpath, "label_color.txt")
+            existing_labels = {}
+            next_id = 1
+
+            if osp.exists(label_color_file):
+                try:
+                    with open(label_color_file, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if not line or line.startswith('#'):
+                                continue
+                            parts = line.split(None, 1)
+                            if len(parts) >= 2:
+                                try:
+                                    label_id = int(parts[0])
+                                    label_name = parts[1]
+                                    existing_labels[label_name] = label_id
+                                    next_id = max(next_id, label_id + 1)
+                                except ValueError:
+                                    pass
+                except Exception as e:
+                    logger.warning(f"Error reading existing label_color.txt: {e}")
+
+            # Write updated label_color.txt with only used labels
+            special_labels = ["忽略", ""]
+
+            with open(label_color_file, 'w', encoding='utf-8') as f:
+                for label_name in sorted(used_labels):
+                    # Skip empty labels and special filter labels
+                    if not label_name or label_name in special_labels:
+                        continue
+
+                    # Use existing ID if available, otherwise assign new ID
+                    if label_name in existing_labels:
+                        label_id = existing_labels[label_name]
+                    else:
+                        label_id = next_id
+                        next_id += 1
+
+                    f.write(f"{label_id} {label_name}\n")
+
+            logger.info(f"Updated label_color.txt with {len(used_labels)} labels from annotations")
+
+        except Exception as e:
+            logger.error(f"Error updating label_color.txt from annotations: {e}")
+
     def _save_labels_to_label_color_file(self, dirpath):
         """Save current labels to label_color.txt file
         Format: ID label_name
@@ -6078,6 +6162,11 @@ class LabelingWidget(LabelDialog):
         self.actions.open_next_unchecked_image.setEnabled(True)
         self.actions.open_prev_unchecked_image.setEnabled(True)
         self.toggle_actions(True)
+
+        # Update label_color.txt from actual annotations (for XML format)
+        # This ensures only actually used labels are in label_color.txt
+        if LabelFile.suffix == ".xml":
+            self._update_label_color_from_annotations(dirpath)
 
         # Load labels from label_color.txt if it exists (for XML format)
         if LabelFile.suffix == ".xml":
