@@ -61,6 +61,21 @@ class FileLabelFilterComboBox(QWidget):
         self.setLayout(layout)
 
     def update_items(self, items):
+        # Save current selection
+        current_text = self.text_box.currentText()
+
+        # Block signals to prevent triggering filter change during update
+        self.text_box.blockSignals(True)
+
         self.items = items
         self.text_box.clear()
         self.text_box.addItems(self.items)
+
+        # Restore previous selection if it still exists in new items
+        if current_text and current_text in items:
+            index = self.text_box.findText(current_text)
+            if index >= 0:
+                self.text_box.setCurrentIndex(index)
+
+        # Unblock signals
+        self.text_box.blockSignals(False)
