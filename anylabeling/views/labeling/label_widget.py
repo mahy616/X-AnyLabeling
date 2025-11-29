@@ -5903,17 +5903,56 @@ class LabelingWidget(LabelDialog):
             )
             return
 
-        msg = self.tr(
-            "You are about to permanently delete this label file, "
-            "proceed anyway?"
-        )
+        # For VM Detection mode, warn about deleting current image's annotation only
+        if LabelFile.annotation_mode == "vm_detection":
+            msg = self.tr(
+                "You are about to permanently delete this image's annotation, "
+                "proceed anyway?"
+            )
+        else:
+            msg = self.tr(
+                "You are about to permanently delete this label file, "
+                "proceed anyway?"
+            )
         answer = mb.warning(self, self.tr("Attention"), msg, mb.Yes | mb.No)
         if answer != mb.Yes:
             return
 
         label_file = self.get_label_file()
         if osp.exists(label_file):
-            os.remove(label_file)
+            # For VM Detection mode, only remove current image's line
+            if LabelFile.annotation_mode == "vm_detection":
+                try:
+                    image_name = osp.basename(self.filename)
+
+                    # Read all lines
+                    with open(label_file, 'r', encoding='utf-8-sig') as f:
+                        lines = f.readlines()
+
+                    # Filter out the line for current image
+                    new_lines = [lines[0]]  # Keep version line
+                    for line in lines[1:]:
+                        if line.strip() and ':' in line:
+                            img_name = line.split(':', 1)[0].strip()
+                            if img_name != image_name:
+                                new_lines.append(line)
+
+                    # Write back
+                    with open(label_file, 'w', encoding='utf-8') as f:
+                        f.writelines(new_lines)
+
+                except Exception as e:
+                    logger.error(f"Error deleting annotation for {image_name}: {e}")
+                    mb.critical(
+                        self,
+                        self.tr("Error"),
+                        self.tr(f"Failed to delete annotation: {e}"),
+                        mb.Ok,
+                    )
+                    return
+            else:
+                # For XML/JSON, delete the entire file
+                os.remove(label_file)
 
             item = self.file_list_widget.currentItem()
             item.setCheckState(Qt.Unchecked)
@@ -6234,8 +6273,8 @@ class LabelingWidget(LabelDialog):
         if LabelFile.suffix == ".xml":
             self._load_labels_from_label_color_file(dirpath)
 
-        # Load labels from DetectTrainData.txt if it exists (for TXT format - VM Detection)
-        if LabelFile.suffix == ".txt":
+        # Load labels from DetectTrainData.txt if it exists (for VM Detection mode)
+        if LabelFile.annotation_mode == "vm_detection":
             self._load_labels_from_detect_file_all(dirpath)
 
         self.open_next_image(load=load)
