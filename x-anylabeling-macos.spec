@@ -26,7 +26,7 @@ exe = EXE(
     a.binaries,
     a.zipfiles,
     a.datas,
-    name='X-AnyLabeling-macOS',
+    name='IMLabel',
     debug=False,
     strip=False,
     upx=False,

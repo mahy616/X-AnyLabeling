@@ -45,12 +45,12 @@ exe = EXE(
     upx=False,
     runtime_tmpdir=None,
     console=False,
-    icon='anylabeling/resources/images/icon.icns',
+    icon='anylabeling/resources/images/icon.ico',
 )
 app = BUNDLE(
     exe,
     name='IM-Label.app',
-    icon='anylabeling/resources/images/icon.icns',
+    icon='anylabeling/resources/images/icon.ico',
     bundle_identifier=None,
     info_plist={'NSHighResolutionCapable': 'True'},
 )

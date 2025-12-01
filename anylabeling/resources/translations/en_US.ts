@@ -2570,6 +2570,21 @@ Reset the label as {}.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <location filename="../../views/labeling/label_widget.py" line="1104"/>
+        <source>VM Segmentation Mode</source>
+        <translation>VM Segmentation Mode</translation>
+    </message>
+    <message>
+        <location filename="../../views/labeling/label_widget.py" line="1111"/>
+        <source>VM Detection Mode</source>
+        <translation>VM Detection Mode</translation>
+    </message>
+    <message>
+        <location filename="../../views/labeling/label_widget.py" line="1693"/>
+        <source>Annotation Mode</source>
+        <translation>Annotation Mode</translation>
+    </message>
+    <message>
         <location filename="../../views/labeling/label_widget.py" line="1127"/>
         <source>Upload Custom YOLO Oriented Bounding Boxes Annotations</source>
         <translation type="unfinished"></translation>

@@ -2966,6 +2966,21 @@ Reset the label as {}.</source>
         <translation>导入 YOLO 水平框标签</translation>
     </message>
     <message>
+        <location filename="../../views/labeling/label_widget.py" line="1104"/>
+        <source>VM Segmentation Mode</source>
+        <translation>VM 分割模式</translation>
+    </message>
+    <message>
+        <location filename="../../views/labeling/label_widget.py" line="1111"/>
+        <source>VM Detection Mode</source>
+        <translation>VM 目标检测模式</translation>
+    </message>
+    <message>
+        <location filename="../../views/labeling/label_widget.py" line="1693"/>
+        <source>Annotation Mode</source>
+        <translation>标注模式</translation>
+    </message>
+    <message>
         <location filename="../../views/labeling/label_widget.py" line="1113"/>
         <source>&amp;Upload YOLO-Obb Annotations</source>
         <translation type="obsolete">导入 YOLO 旋转框标签</translation>

@@ -37,7 +37,7 @@ exe = EXE(
     a.binaries,
     a.zipfiles,
     a.datas,
-    name='X-Anylabeling-Linux-GPU',
+    name='IMLabel',
     debug=False,
     strip=False,
     upx=False,
