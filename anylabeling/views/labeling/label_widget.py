@@ -6,6 +6,7 @@ import os
 import os.path as osp
 import re
 import shutil
+import xml.etree.ElementTree as ET
 from typing import Optional
 
 import cv2
@@ -2545,21 +2546,15 @@ class LabelingWidget(LabelDialog):
 
             # Handle special filter: [OK] - empty XML content
             if target_label == "[OK]":
-                is_ok = self._is_xml_empty_or_ok(xml_file)
-                logger.debug(f"XML {osp.basename(xml_file)}: is_ok={is_ok}")
-                return is_ok
+                return self._is_xml_empty_or_ok(xml_file)
 
             # Handle special filter: [忽略] - has empty flags
             if target_label == "[忽略]":
-                has_ignore = self._has_ignore_flags(xml_file)
-                logger.debug(f"XML {osp.basename(xml_file)}: has_ignore={has_ignore}")
-                return has_ignore
+                return self._has_ignore_flags(xml_file)
 
             # Normal label filtering
             labels = self._load_labels_from_xml(xml_file)
-            result = target_label in labels
-            logger.debug(f"XML {osp.basename(xml_file)}: labels={labels}, has '{target_label}'={result}")
-            return result
+            return target_label in labels
 
         # Try JSON format
         json_file = base_path + ".json"
@@ -2577,9 +2572,7 @@ class LabelingWidget(LabelDialog):
 
             # Handle special filter: [OK] - empty shapes
             if target_label == "[OK]":
-                is_ok = self._is_json_empty_or_ok(json_file)
-                logger.debug(f"JSON {osp.basename(json_file)}: is_ok={is_ok}")
-                return is_ok
+                return self._is_json_empty_or_ok(json_file)
 
             # JSON format doesn't have ignore concept, return False
             if target_label == "[忽略]":
@@ -2587,12 +2580,9 @@ class LabelingWidget(LabelDialog):
 
             # Normal label filtering
             labels = self._load_labels_from_json(json_file)
-            result = target_label in labels
-            logger.debug(f"JSON {osp.basename(json_file)}: labels={labels}, has '{target_label}'={result}")
-            return result
+            return target_label in labels
 
         # No annotation file found
-        logger.debug(f"No annotation file found for {filename}")
         # For [未标注] filter, files without annotation file match
         if target_label == "[未标注]":
             return True
@@ -2648,8 +2638,6 @@ class LabelingWidget(LabelDialog):
         - VisionMaster format: _ItemsData is empty or doesn't exist
         - PASCAL VOC format: No object elements exist
         """
-        import xml.etree.ElementTree as ET
-
         try:
             # Empty file
             if osp.getsize(xml_file) == 0:
@@ -2670,7 +2658,7 @@ class LabelingWidget(LabelDialog):
                 objects = root.findall(".//object")
                 return len(objects) == 0
 
-        except Exception as e:
+        except (IOError, OSError, ET.ParseError) as e:
             logger.warning(f"Error checking if XML is OK {xml_file}: {e}")
             return False
 
@@ -2680,8 +2668,6 @@ class LabelingWidget(LabelDialog):
         This is specific to VisionMaster format where empty flags indicate
         an area that should be ignored.
         """
-        import xml.etree.ElementTree as ET
-
         try:
             # Handle empty XML files
             if osp.getsize(xml_file) == 0:
@@ -2700,7 +2686,7 @@ class LabelingWidget(LabelDialog):
 
             return False
 
-        except Exception as e:
+        except (IOError, OSError, ET.ParseError) as e:
             logger.warning(f"Error checking for ignore flags in XML {xml_file}: {e}")
             return False
 
@@ -2714,13 +2700,12 @@ class LabelingWidget(LabelDialog):
             shapes = data.get('shapes', [])
             return len(shapes) == 0
 
-        except Exception as e:
+        except (IOError, OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
             logger.warning(f"Error checking if JSON is OK {json_file}: {e}")
             return False
 
     def _load_labels_from_xml(self, xml_file):
         """Extract all labels from XML annotation file"""
-        import xml.etree.ElementTree as ET
         labels = set()
 
         try:
@@ -2745,7 +2730,7 @@ class LabelingWidget(LabelDialog):
                     name_elem = obj.find("name")
                     if name_elem is not None and name_elem.text:
                         labels.add(name_elem.text.strip())
-        except Exception as e:
+        except (IOError, OSError, ET.ParseError) as e:
             logger.warning(f"Error loading labels from XML {xml_file}: {e}")
 
         return labels
@@ -2763,7 +2748,7 @@ class LabelingWidget(LabelDialog):
                 label = shape.get('label')
                 if label:
                     labels.add(label)
-        except Exception as e:
+        except (IOError, OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
             logger.warning(f"Error loading labels from JSON {json_file}: {e}")
 
         return labels
@@ -2799,14 +2784,13 @@ class LabelingWidget(LabelDialog):
                     continue
 
                 # Extract labels using regex
-                import re
                 # Pattern to match: "label" (labels are in quotes)
                 pattern = r'"([^"]+)"'
                 matches = re.findall(pattern, parts[1])
                 labels.update(matches)
                 break  # Found the image, no need to continue
 
-        except Exception as e:
+        except (IOError, OSError, UnicodeDecodeError) as e:
             logger.warning(f"Error loading labels from DetectTrainData.txt {detect_file}: {e}")
 
         return labels
@@ -2838,7 +2822,7 @@ class LabelingWidget(LabelDialog):
 
             return False
 
-        except Exception as e:
+        except (IOError, OSError, UnicodeDecodeError) as e:
             logger.warning(f"Error checking image in DetectTrainData.txt {detect_file}: {e}")
             return False
 
@@ -2876,7 +2860,6 @@ class LabelingWidget(LabelDialog):
                 if osp.getsize(annotation_file) == 0:
                     return True  # Empty XML = OK annotation, should be marked as annotated
 
-                import xml.etree.ElementTree as ET
                 tree = ET.parse(annotation_file)
                 root = tree.getroot()
 
@@ -2891,7 +2874,7 @@ class LabelingWidget(LabelDialog):
                     objects = root.findall(".//object")
                     return len(objects) > 0
 
-            except Exception as e:
+            except (IOError, OSError, ET.ParseError) as e:
                 logger.warning(f"Error checking XML annotations {annotation_file}: {e}")
                 return False
 
@@ -2902,12 +2885,48 @@ class LabelingWidget(LabelDialog):
                     data = json.load(f)
                 shapes = data.get('shapes', [])
                 return len(shapes) > 0
-            except Exception as e:
+            except (IOError, OSError, json.JSONDecodeError, UnicodeDecodeError) as e:
                 logger.warning(f"Error checking JSON annotations {annotation_file}: {e}")
                 return False
 
         # Unknown format, assume has annotation if file exists
         return True
+
+    def _parse_label_color_file(self, label_color_file):
+        """Parse label_color.txt file and return existing labels dict and next available ID
+
+        Args:
+            label_color_file: Path to label_color.txt file
+
+        Returns:
+            tuple: (existing_labels dict, next_id int)
+        """
+        existing_labels = {}
+        next_id = 1
+
+        if not osp.exists(label_color_file):
+            return existing_labels, next_id
+
+        try:
+            with open(label_color_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+
+                    parts = line.split(None, 1)
+                    if len(parts) >= 2:
+                        try:
+                            label_id = int(parts[0])
+                            label_name = parts[1]
+                            existing_labels[label_name] = label_id
+                            next_id = max(next_id, label_id + 1)
+                        except ValueError:
+                            pass
+        except (IOError, OSError) as e:
+            logger.warning(f"Error reading label_color.txt: {e}")
+
+        return existing_labels, next_id
 
     def _load_labels_from_label_color_file(self, dirpath):
         """Load labels from label_color.txt file in the directory
@@ -2966,7 +2985,7 @@ class LabelingWidget(LabelDialog):
             # Update the filter combobox after loading labels
             self.update_unique_label_filter()
 
-        except Exception as e:
+        except (IOError, OSError, json.JSONDecodeError) as e:
             logger.error(f"Error loading label_color.txt from {dirpath}: {e}")
 
     def _load_labels_from_detect_file_all(self, dirpath):
@@ -2984,8 +3003,6 @@ class LabelingWidget(LabelDialog):
             return
 
         try:
-            import re
-
             with open(detect_file, 'r', encoding='utf-8-sig') as f:
                 lines = f.readlines()
 
@@ -3028,7 +3045,7 @@ class LabelingWidget(LabelDialog):
             # Update the filter combobox after loading labels
             self.update_unique_label_filter()
 
-        except Exception as e:
+        except (IOError, OSError, UnicodeDecodeError) as e:
             logger.error(f"Error loading labels from DetectTrainData.txt in {dirpath}: {e}")
 
     def _update_label_color_from_annotations(self, dirpath):
@@ -3041,7 +3058,6 @@ class LabelingWidget(LabelDialog):
             dirpath: Directory path containing annotation files
         """
         from .label_file import LabelFile
-        import re
 
         # Only for XML mode (VM Segmentation)
         if LabelFile.suffix != ".xml":
@@ -3063,34 +3079,14 @@ class LabelingWidget(LabelDialog):
                     # Extract labels from XML file
                     labels = self._load_labels_from_xml(xml_file)
                     used_labels.update(labels)
-                except Exception as e:
+                except (IOError, OSError, ET.ParseError) as e:
                     logger.warning(f"Error reading {xml_file}: {e}")
                     continue
 
             # Now update label_color.txt with only used labels
             # Read existing label IDs to preserve them
             label_color_file = osp.join(dirpath, "label_color.txt")
-            existing_labels = {}
-            next_id = 1
-
-            if osp.exists(label_color_file):
-                try:
-                    with open(label_color_file, 'r', encoding='utf-8') as f:
-                        for line in f:
-                            line = line.strip()
-                            if not line or line.startswith('#'):
-                                continue
-                            parts = line.split(None, 1)
-                            if len(parts) >= 2:
-                                try:
-                                    label_id = int(parts[0])
-                                    label_name = parts[1]
-                                    existing_labels[label_name] = label_id
-                                    next_id = max(next_id, label_id + 1)
-                                except ValueError:
-                                    pass
-                except Exception as e:
-                    logger.warning(f"Error reading existing label_color.txt: {e}")
+            existing_labels, next_id = self._parse_label_color_file(label_color_file)
 
             # Write updated label_color.txt with only used labels
             special_labels = ["忽略", ""]
@@ -3112,7 +3108,7 @@ class LabelingWidget(LabelDialog):
 
             logger.info(f"Updated label_color.txt with {len(used_labels)} labels from annotations")
 
-        except Exception as e:
+        except (IOError, OSError) as e:
             logger.error(f"Error updating label_color.txt from annotations: {e}")
 
     def _save_labels_to_label_color_file(self, dirpath):
@@ -3132,7 +3128,7 @@ class LabelingWidget(LabelDialog):
             logger.warning(f"[label_color.txt] Directory does not exist: {dirpath}")
             try:
                 os.makedirs(dirpath)
-            except Exception as e:
+            except (IOError, OSError) as e:
                 logger.error(f"[label_color.txt] Failed to create directory: {e}")
                 return
 
@@ -3142,27 +3138,7 @@ class LabelingWidget(LabelDialog):
 
         try:
             # Read existing file to preserve IDs if they exist
-            existing_labels = {}
-            next_id = 1
-
-            if osp.exists(label_color_file):
-                try:
-                    with open(label_color_file, 'r', encoding='utf-8') as f:
-                        for line in f:
-                            line = line.strip()
-                            if not line or line.startswith('#'):
-                                continue
-                            parts = line.split(None, 1)
-                            if len(parts) >= 2:
-                                try:
-                                    label_id = int(parts[0])
-                                    label_name = parts[1]
-                                    existing_labels[label_name] = label_id
-                                    next_id = max(next_id, label_id + 1)
-                                except ValueError:
-                                    pass
-                except Exception as e:
-                    logger.warning(f"Error reading existing label_color.txt: {e}")
+            existing_labels, next_id = self._parse_label_color_file(label_color_file)
 
             # Write updated file
             # Filter out special labels: "忽略" is used for difficult annotations
@@ -3188,7 +3164,7 @@ class LabelingWidget(LabelDialog):
 
                     f.write(f"{label_id} {label_name}\n")
 
-        except Exception as e:
+        except (IOError, OSError) as e:
             logger.error(f"[label_color.txt] Error saving to {dirpath}: {e}")
             # Show error message to user
             if hasattr(self, 'status'):
