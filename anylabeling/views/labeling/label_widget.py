@@ -244,13 +244,31 @@ class LabelingWidget(LabelDialog):
         self.file_search.setPlaceholderText(self.tr("Search Filename"))
         self.file_search.textChanged.connect(self.file_search_changed)
         self.file_list_widget = QtWidgets.QListWidget()
+        self.file_list_widget.setSelectionMode(
+            QtWidgets.QAbstractItemView.ExtendedSelection
+        )
         self.file_list_widget.itemSelectionChanged.connect(
             self.file_selection_changed
         )
+
+        self.delete_images_button = QtWidgets.QPushButton(
+            self.tr("Delete Image(s)")
+        )
+        self.delete_labels_button = QtWidgets.QPushButton(
+            self.tr("Delete Label(s)")
+        )
+        self.delete_images_button.clicked.connect(self.delete_selected_images)
+        self.delete_labels_button.clicked.connect(self.delete_selected_labels)
+
+        search_layout = QtWidgets.QHBoxLayout()
+        search_layout.addWidget(self.file_search)
+        search_layout.addWidget(self.delete_images_button)
+        search_layout.addWidget(self.delete_labels_button)
+
         file_list_layout = QtWidgets.QVBoxLayout()
         file_list_layout.setContentsMargins(0, 4, 0, 0)
         file_list_layout.setSpacing(4)
-        file_list_layout.addWidget(self.file_search)
+        file_list_layout.addLayout(search_layout)
         file_list_layout.addWidget(self.file_list_widget)
         self.file_dock = QtWidgets.QDockWidget("", self)
         self.file_dock.setObjectName("Files")
@@ -5938,6 +5956,159 @@ class LabelingWidget(LabelDialog):
             self.filename = filename
             if self.filename:
                 self.load_file(self.filename)
+
+    def delete_selected_images(self):
+        items = self.file_list_widget.selectedItems()
+        if not items:
+            return
+
+        mb = QtWidgets.QMessageBox
+        msg = self.tr(
+            "You are about to permanently delete {} image file(s), "
+            "proceed anyway?"
+        ).format(len(items))
+        answer = mb.warning(self, self.tr("Attention"), msg, mb.Yes | mb.No)
+        if answer != mb.Yes:
+            return
+
+        # Use last_open_dir as a fallback for refreshing
+        image_dir = self.last_open_dir
+        if not image_dir and self.filename:
+            image_dir = osp.dirname(self.filename)
+
+        for item in items:
+            image_file = item.text()
+            if not osp.isabs(image_file) and image_dir:
+                image_file = osp.join(image_dir, image_file)
+
+            if osp.exists(image_file):
+                image_path, image_name = osp.split(image_file)
+                
+                save_path = osp.join(image_path, "..", "_delete_")
+                os.makedirs(save_path, exist_ok=True)
+                save_file = osp.join(save_path, image_name)
+                try:
+                    shutil.move(image_file, save_file)
+                except Exception as e:
+                    logger.error(f"Error moving file {image_file}: {e}")
+                    continue
+
+                base_name = osp.splitext(image_name)[0]
+                # Try both formats for labels
+                for ext in [".json", ".xml"]:
+                    # check for label in image dir
+                    label_file = osp.join(image_path, base_name + ext)
+                    if osp.exists(label_file):
+                        os.remove(label_file)
+                    # check for label in output dir
+                    if self.output_dir:
+                        out_label_file = osp.join(self.output_dir, base_name + ext)
+                        if osp.exists(out_label_file):
+                            os.remove(out_label_file)
+
+        if image_dir:
+            self.import_image_folder(image_dir)
+
+    def delete_selected_labels(self):
+        items = self.file_list_widget.selectedItems()
+        if not items:
+            return
+
+        mb = QtWidgets.QMessageBox
+        if self._config.get("keep_prev", False):
+            mb.warning(
+                self,
+                self.tr("Attention"),
+                self.tr(
+                    "Please disable 'Keep Previous Annotation' before deleting label files."
+                ),
+                mb.Ok,
+            )
+            return
+
+        msg = self.tr(
+            "You are about to permanently delete the label files for {} images, "
+            "proceed anyway?"
+        ).format(len(items))
+        answer = mb.warning(self, self.tr("Attention"), msg, mb.Yes | mb.No)
+        if answer != mb.Yes:
+            return
+
+        image_dir = self.last_open_dir
+        if not image_dir and self.filename:
+            image_dir = osp.dirname(self.filename)
+
+        if LabelFile.annotation_mode == "vm_detection":
+            # In VM mode, all annotations are in one file.
+            label_file = None
+            if self.filename:
+                label_file = self.get_label_file()
+            elif image_dir:
+                if self.output_dir:
+                    label_file = osp.join(self.output_dir, "DetectTrainData.txt")
+                else:
+                    label_file = osp.join(image_dir, "DetectTrainData.txt")
+            
+            if not label_file or not osp.exists(label_file):
+                return
+            
+            # Use basenames for comparison in VM mode
+            image_names_to_delete = {osp.basename(item.text()) for item in items}
+
+            try:
+                with open(label_file, 'r', encoding='utf-8-sig') as f:
+                    lines = f.readlines()
+
+                new_lines = [lines[0]]  # Keep version line
+                for line in lines[1:]:
+                    if line.strip() and ':' in line:
+                        img_name = line.split(':', 1)[0].strip()
+                        if img_name not in image_names_to_delete:
+                            new_lines.append(line)
+
+                with open(label_file, 'w', encoding='utf-8') as f:
+                    f.writelines(new_lines)
+
+            except Exception as e:
+                logger.error(f"Error bulk-deleting annotations: {e}")
+                mb.critical(
+                    self,
+                    self.tr("Error"),
+                    self.tr(f"Failed to delete annotations: {e}"),
+                    mb.Ok,
+                )
+                return
+        else:
+            # For XML/JSON, delete individual files
+            for item in items:
+                image_file = item.text()
+                if not osp.isabs(image_file) and image_dir:
+                    image_file = osp.join(image_dir, image_file)
+                
+                image_path = osp.dirname(image_file)
+                base_name = osp.splitext(osp.basename(image_file))[0]
+                
+                for ext in [".json", ".xml"]:
+                    # check for label in image dir
+                    label_file = osp.join(image_path, base_name + ext)
+                    if osp.exists(label_file):
+                        os.remove(label_file)
+                    # check for label in output dir
+                    if self.output_dir:
+                        out_label_file = osp.join(self.output_dir, base_name + ext)
+                        if osp.exists(out_label_file):
+                            os.remove(out_label_file)
+
+        # Uncheck items in the list
+        for item in items:
+            item.setCheckState(Qt.Unchecked)
+
+        # We should reload the current file to update its state if its label was deleted
+        current_item = self.file_list_widget.currentItem()
+        if current_item and current_item in items and image_dir:
+             self.reset_state()
+             self.load_file(osp.join(image_dir, current_item.text()))
+
 
     def delete_image_file(self):
         if len(self.image_list) < 2:
