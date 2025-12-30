@@ -247,6 +247,7 @@ class LabelingWidget(LabelDialog):
         self.file_list_widget.setSelectionMode(
             QtWidgets.QAbstractItemView.ExtendedSelection
         )
+        self.file_list_widget.setDragEnabled(False)
         self.file_list_widget.itemSelectionChanged.connect(
             self.file_selection_changed
         )
@@ -279,6 +280,10 @@ class LabelingWidget(LabelDialog):
         self.file_dock.setStyleSheet(
             "QDockWidget::title {" "text-align: center;" "padding: 0px;" "}"
         )
+
+        self.load_timer = QtCore.QTimer()
+        self.load_timer.setSingleShot(True)
+        self.load_timer.timeout.connect(self.load_selected_file)
 
         self.zoom_widget = ZoomWidget()
 
@@ -3901,10 +3906,13 @@ class LabelingWidget(LabelDialog):
         )
 
     def file_selection_changed(self):
-        items = self.file_list_widget.selectedItems()
-        if not items:
+        self.load_timer.start(200)
+
+    def load_selected_file(self):
+        # Use currentItem() to respect the focus/cursor position
+        item = self.file_list_widget.currentItem()
+        if not item:
             return
-        item = items[0]
 
         if not self.may_continue():
             return
