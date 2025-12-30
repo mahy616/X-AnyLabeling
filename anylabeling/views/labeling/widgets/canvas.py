@@ -864,6 +864,12 @@ class Canvas(
                 self.prev_point = pos
                 self.prev_pan_point = ev.localPos()
                 self.repaint()
+        elif (
+            ev.button() == QtCore.Qt.RightButton
+            and self.drawing()
+            and self.create_mode == "polygon"
+        ):
+            self.undo_last_point()
         elif ev.button() == QtCore.Qt.RightButton and self.editing():
             group_mode = int(ev.modifiers()) == QtCore.Qt.ControlModifier
             if not self.selected_shapes or (
@@ -882,6 +888,8 @@ class Canvas(
         if self.is_loading:
             return
         if ev.button() == QtCore.Qt.RightButton:
+            if self.drawing() and self.create_mode == "polygon":
+                return
             menu = self.menus[len(self.selected_shapes_copy) > 0]
             self.restore_cursor()
             if (
