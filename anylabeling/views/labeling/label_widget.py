@@ -271,6 +271,17 @@ class LabelingWidget(LabelDialog):
         file_list_layout.setSpacing(4)
         file_list_layout.addLayout(search_layout)
         file_list_layout.addWidget(self.file_list_widget)
+
+        # File list filter checkboxes
+        self.show_unlabeled_checkbox = QtWidgets.QCheckBox(self.tr("Show only unlabeled"))
+        self.show_labeled_checkbox = QtWidgets.QCheckBox(self.tr("Labeled: 0/0"))
+        
+        self.show_unlabeled_checkbox.stateChanged.connect(self.update_file_list_filter)
+        self.show_labeled_checkbox.stateChanged.connect(self.update_file_list_filter)
+
+        file_list_layout.addWidget(self.show_unlabeled_checkbox)
+        file_list_layout.addWidget(self.show_labeled_checkbox)
+
         self.file_dock = QtWidgets.QDockWidget("", self)
         self.file_dock.setObjectName("Files")
         self.file_dock.setTitleBarWidget(QtWidgets.QWidget(self))
@@ -2517,22 +2528,49 @@ class LabelingWidget(LabelDialog):
 
     def file_label_filter_changed(self, index):
         """Filter file list by selected label from unique_label_list"""
-        selected_label = self.unique_label_filter_combobox.text_box.itemText(index)
+        self.update_file_list_filter()
 
-        if not selected_label:
-            # Empty selection means show all files
-            for i in range(self.file_list_widget.count()):
-                item = self.file_list_widget.item(i)
-                item.setHidden(False)
-        else:
-            # Filter files by label
-            for i in range(self.file_list_widget.count()):
-                item = self.file_list_widget.item(i)
-                filename = item.text()
+    def update_file_list_filter(self):
+        """Update file list filtering based on checkboxes and label filter"""
+        sender = self.sender()
 
-                # Check if this file contains the selected label
-                has_label = self._check_file_has_label(filename, selected_label)
-                item.setHidden(not has_label)
+        # Mutual exclusion for checkboxes
+        if sender == self.show_unlabeled_checkbox and self.show_unlabeled_checkbox.isChecked():
+            self.show_labeled_checkbox.blockSignals(True)
+            self.show_labeled_checkbox.setChecked(False)
+            self.show_labeled_checkbox.blockSignals(False)
+        elif sender == self.show_labeled_checkbox and self.show_labeled_checkbox.isChecked():
+            self.show_unlabeled_checkbox.blockSignals(True)
+            self.show_unlabeled_checkbox.setChecked(False)
+            self.show_unlabeled_checkbox.blockSignals(False)
+
+        show_unlabeled = self.show_unlabeled_checkbox.isChecked()
+        show_labeled = self.show_labeled_checkbox.isChecked()
+        label_filter = self.unique_label_filter_combobox.text_box.currentText()
+
+        labeled_count = 0
+        total_count = self.file_list_widget.count()
+
+        for i in range(total_count):
+            item = self.file_list_widget.item(i)
+            is_labeled = (item.checkState() == Qt.Checked)
+            if is_labeled:
+                labeled_count += 1
+
+            # 1. Annotation Status Filter
+            visible = True
+            if show_unlabeled and is_labeled:
+                visible = False
+            elif show_labeled and not is_labeled:
+                visible = False
+
+            # 2. Label Content Filter
+            if visible and label_filter:
+                visible = self._check_file_has_label(item.text(), label_filter)
+
+            item.setHidden(not visible)
+
+        self.show_labeled_checkbox.setText(self.tr(f"Labeled: {labeled_count}/{total_count}"))
 
     def _check_file_has_label(self, filename, target_label):
         """Check if the annotation file contains the target label
@@ -4670,6 +4708,7 @@ class LabelingWidget(LabelDialog):
                 if len(items) != 1:
                     raise RuntimeError("There are duplicate files.")
                 items[0].setCheckState(Qt.Checked)
+                self.update_file_list_filter()
             # disable allows next and previous image to proceed
             # self.filename = filename
             return True
@@ -5958,6 +5997,7 @@ class LabelingWidget(LabelDialog):
 
             item = self.file_list_widget.currentItem()
             item.setCheckState(Qt.Unchecked)
+            self.update_file_list_filter()
 
             filename = self.filename
             self.reset_state()
@@ -6110,6 +6150,8 @@ class LabelingWidget(LabelDialog):
         # Uncheck items in the list
         for item in items:
             item.setCheckState(Qt.Unchecked)
+
+        self.update_file_list_filter()
 
         # We should reload the current file to update its state if its label was deleted
         current_item = self.file_list_widget.currentItem()
@@ -6436,6 +6478,9 @@ class LabelingWidget(LabelDialog):
 
         if image_files:
             self.async_exif_scanner.start_scan(image_files)
+        
+        # Update filter and counts
+        self.update_file_list_filter()
 
     def toggle_auto_labeling_widget(self):
         """Toggle auto labeling widget visibility."""
