@@ -2079,6 +2079,7 @@ class LabelingWidget(LabelDialog):
         description_header_layout.addStretch()
         description_header_layout.addWidget(self.description_checkbox)
         description_header_widget = QWidget()
+        self.description_header_widget = description_header_widget  # Keep reference to prevent GC
         description_header_widget.setLayout(description_header_layout)
 
         # right_sidebar_layout.addWidget(description_header_widget)
