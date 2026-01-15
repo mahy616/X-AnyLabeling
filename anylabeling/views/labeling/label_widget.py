@@ -1928,9 +1928,9 @@ class LabelingWidget(LabelDialog):
             None,
             ok_mode,
             None,
-            open_chatbot,
-            open_vqa,
-            open_classifier,
+            # open_chatbot,
+            # open_vqa,
+            # open_classifier,
             None,
             fit_width,
             zoom,
@@ -2068,8 +2068,8 @@ class LabelingWidget(LabelDialog):
         description_header_widget = QWidget()
         description_header_widget.setLayout(description_header_layout)
 
-        right_sidebar_layout.addWidget(description_header_widget)
-        right_sidebar_layout.addWidget(self.shape_text_edit)
+        # right_sidebar_layout.addWidget(description_header_widget)
+        # right_sidebar_layout.addWidget(self.shape_text_edit)
         right_sidebar_layout.addWidget(self.flag_dock)
 
         # Labels with checkbox
@@ -2098,7 +2098,7 @@ class LabelingWidget(LabelDialog):
         empty_widget = QWidget()
         empty_widget.setFixedHeight(0)
         self.label_dock.setTitleBarWidget(empty_widget)
-        right_sidebar_layout.addWidget(self.label_dock)
+        right_sidebar_layout.addWidget(self.label_dock, 1)
 
         # Create a horizontal layout for the filters and select button
         filter_layout = QHBoxLayout()
@@ -2108,8 +2108,8 @@ class LabelingWidget(LabelDialog):
         filter_layout.addWidget(self.gid_filter_combobox, 1)
         filter_layout.addWidget(self.select_toggle_button, 0)
         right_sidebar_layout.addLayout(filter_layout)
-        right_sidebar_layout.addWidget(self.shape_dock)
-        right_sidebar_layout.addWidget(self.file_dock)
+        right_sidebar_layout.addWidget(self.shape_dock, 1)
+        right_sidebar_layout.addWidget(self.file_dock, 2)
         self.file_dock.setFeatures(QDockWidget.DockWidgetFloatable)
         dock_features = (
             ~QDockWidget.DockWidgetMovable
@@ -2299,10 +2299,10 @@ class LabelingWidget(LabelDialog):
             f" {text_next}(<b>D</b>),"
             f" {text_rectangle}(<b>R</b>),"
             f" {text_polygon}(<b>P</b>),"
-            f" {text_rotation}(<b>O</b>),"
-            f" {text_chatbot}(<b>Ctrl+1</b>),"
-            f" {text_vqa}(<b>Ctrl+2</b>),"
-            f" {text_classifier}(<b>Ctrl+3</b>)"
+            f" {text_rotation}(<b>O</b>)"
+            # f" {text_chatbot}(<b>Ctrl+1</b>),"
+            # f" {text_vqa}(<b>Ctrl+2</b>),"
+            # f" {text_classifier}(<b>Ctrl+3</b>)"
         )
 
     @pyqtSlot()

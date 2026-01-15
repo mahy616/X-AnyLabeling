@@ -1386,15 +1386,15 @@ class LabelDialog(QtWidgets.QDialog):
         if show_text_field:
             layout_edit = QtWidgets.QHBoxLayout()
             layout_edit.addWidget(self.edit, 4)
-            layout_edit.addWidget(self.edit_group_id, 2)
+            # layout_edit.addWidget(self.edit_group_id, 2)
             layout.addLayout(layout_edit)
 
         # Add linking layout
         layout_linking = QtWidgets.QHBoxLayout()
         layout_linking.addWidget(self.linking_input, 4)
         layout_linking.addWidget(self.add_linking_button, 2)
-        layout.addLayout(layout_linking)
-        layout.addWidget(self.linking_list)
+        # layout.addLayout(layout_linking)
+        # layout.addWidget(self.linking_list)
 
         # buttons
         self.button_box = bb = QtWidgets.QDialogButtonBox(
@@ -1411,7 +1411,7 @@ class LabelDialog(QtWidgets.QDialog):
         self.edit_description = QtWidgets.QTextEdit()
         self.edit_description.setPlaceholderText(self.tr("Label description"))
         self.edit_description.setFixedHeight(50)
-        layout.addWidget(self.edit_description)
+        # layout.addWidget(self.edit_description)
 
         # difficult & confirm button
         layout_button = QtWidgets.QHBoxLayout()
