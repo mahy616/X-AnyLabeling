@@ -103,6 +103,7 @@ class Canvas(
         self.prev_move_point = QtCore.QPoint()
         self.offsets = QtCore.QPointF(), QtCore.QPointF()
         self.scale = 1.0
+        self.pan_margin = QtCore.QSizeF(0.0, 0.0)
         self.pixmap = QtGui.QPixmap()
         self.visible = {}
         self._hide_backround = False
@@ -2095,7 +2096,14 @@ class Canvas(
     def minimumSizeHint(self):
         """Get minimum size hint"""
         if self.pixmap:
-            return self.scale * self.pixmap.size()
+            base = QtCore.QSizeF(self.pixmap.size()) * self.scale
+            margin = QtCore.QSizeF(
+                self.pan_margin.width() * 2, self.pan_margin.height() * 2
+            )
+            size = base + margin
+            return QtCore.QSize(
+                int(round(size.width())), int(round(size.height()))
+            )
         return super().minimumSizeHint()
 
     # QT Overload
