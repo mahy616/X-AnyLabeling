@@ -279,8 +279,10 @@ class LabelingWidget(LabelDialog):
         self.show_unlabeled_checkbox.stateChanged.connect(self.update_file_list_filter)
         self.show_labeled_checkbox.stateChanged.connect(self.update_file_list_filter)
 
-        file_list_layout.addWidget(self.show_unlabeled_checkbox)
-        file_list_layout.addWidget(self.show_labeled_checkbox)
+        filter_checkbox_layout = QtWidgets.QHBoxLayout()
+        filter_checkbox_layout.addWidget(self.show_unlabeled_checkbox)
+        filter_checkbox_layout.addWidget(self.show_labeled_checkbox)
+        file_list_layout.addLayout(filter_checkbox_layout)
 
         self.file_dock = QtWidgets.QDockWidget("", self)
         self.file_dock.setObjectName("Files")
@@ -2570,7 +2572,7 @@ class LabelingWidget(LabelDialog):
 
             item.setHidden(not visible)
 
-        self.show_labeled_checkbox.setText(self.tr(f"Labeled: {labeled_count}/{total_count}"))
+        self.show_labeled_checkbox.setText(self.tr("Labeled: {}/{}").format(labeled_count, total_count))
 
     def _check_file_has_label(self, filename, target_label):
         """Check if the annotation file contains the target label
