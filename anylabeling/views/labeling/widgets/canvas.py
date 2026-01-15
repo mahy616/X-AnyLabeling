@@ -2095,7 +2095,15 @@ class Canvas(
     def minimumSizeHint(self):
         """Get minimum size hint"""
         if self.pixmap:
-            return self.scale * self.pixmap.size()
+            # Add viewport size as margin to allow over-scrolling (moving edge to center)
+            # self.parent is the LabelingWidget instance (attribute), not QWidget.parent() method
+            parent = self.parent
+            margin_w = parent.width() if parent else 0
+            margin_h = parent.height() if parent else 0
+            size = self.scale * self.pixmap.size()
+            return QtCore.QSize(
+                int(size.width() + margin_w), int(size.height() + margin_h)
+            )
         return super().minimumSizeHint()
 
     # QT Overload
@@ -2133,12 +2141,12 @@ class Canvas(
 
         if QtCore.Qt.ControlModifier == int(mods):
             # with Ctrl/Command key
-            # zoom
-            self.zoom_request.emit(delta.y(), ev.pos())
-        else:
             # scroll
             self.scroll_request.emit(delta.x(), QtCore.Qt.Horizontal, 0)
             self.scroll_request.emit(delta.y(), QtCore.Qt.Vertical, 0)
+        else:
+            # zoom
+            self.zoom_request.emit(delta.y(), ev.pos())
         ev.accept()
 
     def _scale_rectangle(self, shape, scale_up):

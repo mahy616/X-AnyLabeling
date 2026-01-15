@@ -5212,27 +5212,33 @@ class LabelingWidget(LabelDialog):
         self.set_zoom(zoom_value)
 
     def zoom_request(self, delta, pos):
-        canvas_width_old = self.canvas.width()
+        # Cursor position in image coordinates (unscaled)
+        cursor_image_pos = self.canvas.transform_pos(pos)
+
+        # Cursor position relative to the viewport
+        cursor_screen_x = pos.x() - self.scroll_bars[Qt.Horizontal].value()
+        cursor_screen_y = pos.y() - self.scroll_bars[Qt.Vertical].value()
+
         units = 1.1
         if delta < 0:
             units = 0.9
         self.add_zoom(units)
 
-        canvas_width_new = self.canvas.width()
-        if canvas_width_old != canvas_width_new:
-            canvas_scale_factor = canvas_width_new / canvas_width_old
+        # Calculate new scroll position
+        new_scale = self.canvas.scale
+        new_offset = self.canvas.offset_to_center()
 
-            x_shift = round(pos.x() * canvas_scale_factor - pos.x())
-            y_shift = round(pos.y() * canvas_scale_factor - pos.y())
+        new_canvas_x = (cursor_image_pos.x() + new_offset.x()) * new_scale
+        new_canvas_y = (cursor_image_pos.y() + new_offset.y()) * new_scale
 
-            self.set_scroll(
-                Qt.Horizontal,
-                self.scroll_bars[Qt.Horizontal].value() + x_shift,
-            )
-            self.set_scroll(
-                Qt.Vertical,
-                self.scroll_bars[Qt.Vertical].value() + y_shift,
-            )
+        self.set_scroll(
+            Qt.Horizontal,
+            round(new_canvas_x - cursor_screen_x),
+        )
+        self.set_scroll(
+            Qt.Vertical,
+            round(new_canvas_y - cursor_screen_y),
+        )
 
     def set_fit_window(self, value=True):
         if value:
@@ -5596,19 +5602,31 @@ class LabelingWidget(LabelDialog):
         self.update_thumbnail_pixmap()
 
     def paint_canvas(self):
-        assert not self.image.isNull(), "cannot paint null image"
+        if self.image.isNull():
+            return
         self.canvas.scale = 0.01 * self.zoom_widget.value()
         self.canvas.adjustSize()
         self.canvas.update()
         self.update_navigator_viewport()
 
     def adjust_scale(self, initial=False):
-        value = self.scalers[self.FIT_WINDOW if initial else self.zoom_mode]()
+        mode = self.FIT_WINDOW if initial else self.zoom_mode
+        value = self.scalers[mode]()
         value = int(100 * value)
         self.zoom_widget.setValue(value)
         self.zoom_values[self.filename] = (self.zoom_mode, value)
         if hasattr(self, "navigator_dialog"):
             self.navigator_dialog.set_zoom_value(value)
+
+        # Center the image in the viewport when in FIT_WINDOW mode
+        # Since we added margins to the canvas, centering the scrollbars
+        # will center the image.
+        if mode == self.FIT_WINDOW:
+            QtWidgets.QApplication.processEvents()
+            img_w = self.canvas.pixmap.width() * self.canvas.scale
+            img_h = self.canvas.pixmap.height() * self.canvas.scale
+            self.set_scroll(Qt.Horizontal, int(img_w / 2))
+            self.set_scroll(Qt.Vertical, int(img_h / 2))
 
     def scale_fit_window(self):
         """Figure out the size of the pixmap to fit the main widget."""
