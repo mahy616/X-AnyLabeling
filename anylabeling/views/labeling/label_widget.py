@@ -941,16 +941,10 @@ class LabelingWidget(LabelDialog):
         )
 
         seg_train = action(
-            self.tr("Segmentation Training"),
+            self.tr("Segmentation Train/Infer"),
             lambda: self.launch_imdlseg("train"),
             icon="auto-run",
-            tip=self.tr("Open IMDLSeg for segmentation training"),
-        )
-        seg_infer = action(
-            self.tr("Segmentation Inference"),
-            lambda: self.launch_imdlseg("infer"),
-            icon="auto-run",
-            tip=self.tr("Open IMDLSeg for segmentation inference"),
+            tip=self.tr("Open IMDLSeg for segmentation training/inference"),
         )
 
         zoom = QtWidgets.QWidgetAction(self)
@@ -1766,7 +1760,7 @@ class LabelingWidget(LabelDialog):
                 None,
             ),
         )
-        utils.add_actions(self.menus.train, (seg_train, seg_infer))
+        utils.add_actions(self.menus.train, (seg_train,))
         utils.add_actions(
             self.menus.tool,
             (
