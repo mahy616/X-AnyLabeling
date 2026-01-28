@@ -178,3 +178,12 @@ custom_models: []
 
 # Digit shortcuts
 digit_shortcuts: null
+
+# External tools
+external_tools:
+  imdlseg:
+    enabled: true
+    workdir: "D:/github/imdlseg"
+    entry: "traingUI_v2.2.0.py"
+    python: null
+    args: []

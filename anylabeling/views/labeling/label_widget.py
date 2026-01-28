@@ -6,6 +6,8 @@ import os
 import os.path as osp
 import re
 import shutil
+import subprocess
+import sys
 import xml.etree.ElementTree as ET
 from typing import Optional
 
@@ -34,8 +36,6 @@ from PyQt5.QtWidgets import (
 
 from anylabeling.services.auto_labeling.types import AutoLabelingMode
 from anylabeling.services.auto_labeling import _THUMBNAIL_RENDER_MODELS
-from anylabeling.views.training import UltralyticsDialog
-
 from ...app_info import (
     __appname__,
     __version__,
@@ -940,10 +940,17 @@ class LabelingWidget(LabelDialog):
             enabled=False,
         )
 
-        ultralytics_train = action(
-            "Ultralytics",
-            lambda: self.start_training("ultralytics"),
-            icon="ultralytics",
+        seg_train = action(
+            self.tr("Segmentation Training"),
+            lambda: self.launch_imdlseg("train"),
+            icon="auto-run",
+            tip=self.tr("Open IMDLSeg for segmentation training"),
+        )
+        seg_infer = action(
+            self.tr("Segmentation Inference"),
+            lambda: self.launch_imdlseg("infer"),
+            icon="auto-run",
+            tip=self.tr("Open IMDLSeg for segmentation inference"),
         )
 
         zoom = QtWidgets.QWidgetAction(self)
@@ -1759,7 +1766,7 @@ class LabelingWidget(LabelDialog):
                 None,
             ),
         )
-        utils.add_actions(self.menus.train, (ultralytics_train,))
+        utils.add_actions(self.menus.train, (seg_train, seg_infer))
         utils.add_actions(
             self.menus.tool,
             (
@@ -3406,17 +3413,82 @@ class LabelingWidget(LabelDialog):
                 action.setEnabled(False)
 
     # Trainer
-    def start_training(self, mode):
-        if mode == "ultralytics":
-            dialog = UltralyticsDialog(self)
-        else:
+    def launch_imdlseg(self, mode):
+        tool_cfg = self._config.get("external_tools", {}).get("imdlseg", {})
+        if tool_cfg.get("enabled", True) is False:
+            self.error_message(
+                self.tr("Tool Disabled"),
+                self.tr("IMDLSeg is disabled in the configuration."),
+            )
             return
 
+        workdir = tool_cfg.get("workdir") or r"D:\github\imdlseg"
+        entry = tool_cfg.get("entry") or "traingUI_v2.2.0.py"
+        python_path = tool_cfg.get("python") or sys.executable
+        args = tool_cfg.get("args") or []
+
+        if isinstance(args, str):
+            args = [args]
+
+        if not osp.isabs(workdir):
+            workdir = osp.abspath(workdir)
+        if not osp.isdir(workdir):
+            self.error_message(
+                self.tr("Launch Error"),
+                self.tr(f"IMDLSeg workdir not found: {workdir}"),
+            )
+            return
+
+        entry_path = entry
+        if not osp.isabs(entry_path):
+            entry_path = osp.join(workdir, entry_path)
+        if not osp.exists(entry_path):
+            self.error_message(
+                self.tr("Launch Error"),
+                self.tr(f"IMDLSeg entry not found: {entry_path}"),
+            )
+            return
+
+        is_bat = entry_path.lower().endswith((".bat", ".cmd"))
+        is_exe = entry_path.lower().endswith(".exe")
+        if is_bat:
+            cmd = ["cmd", "/c", entry_path]
+        elif is_exe:
+            cmd = [entry_path]
+        else:
+            if not python_path:
+                python_path = sys.executable
+            if not osp.exists(python_path):
+                self.error_message(
+                    self.tr("Launch Error"),
+                    self.tr(f"Python not found: {python_path}"),
+                )
+                return
+            cmd = [python_path, entry_path]
+
+        cmd += [str(arg) for arg in args]
+
+        env = os.environ.copy()
+        env["IMDLSEG_MODE"] = str(mode)
+
+        creationflags = 0
+        if os.name == "nt":
+            creationflags |= getattr(
+                subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+            )
+            creationflags |= getattr(subprocess, "DETACHED_PROCESS", 0)
+
         try:
-            _ = dialog.exec_()
+            subprocess.Popen(
+                cmd,
+                cwd=workdir,
+                env=env,
+                creationflags=creationflags,
+            )
         except Exception as e:
             self.error_message(
-                "Start Error", f"Failed to start training dialog: {str(e)}"
+                self.tr("Launch Error"),
+                self.tr(f"Failed to start IMDLSeg: {str(e)}"),
             )
 
     # Tools
