@@ -32,3 +32,4 @@ from .toolbar import ToolBar
 from .unique_label_qlist_widget import UniqueLabelQListWidget
 from .vqa_dialog import VQADialog
 from .zoom_widget import ZoomWidget
+from .model_evaluation_dialog import ModelEvaluationDialog

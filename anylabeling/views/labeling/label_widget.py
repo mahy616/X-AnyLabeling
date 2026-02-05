@@ -72,6 +72,7 @@ from .widgets import (
     UniqueLabelQListWidget,
     ZoomWidget,
     NavigatorDialog,
+    ModelEvaluationDialog,
 )
 
 LABEL_COLORMAP = utils.label_colormap()
@@ -792,6 +793,12 @@ class LabelingWidget(LabelDialog):
             shortcuts["show_overview"],
             icon="overview",
             tip=self.tr("Show annotations statistics"),
+        )
+        model_evaluation = action(
+            self.tr("Model Evaluation"),
+            self.open_model_evaluation,
+            icon="overview",
+            tip=self.tr("Open model evaluation"),
         )
         save_crop = action(
             self.tr("Save Cropped Image"),
@@ -1765,6 +1772,7 @@ class LabelingWidget(LabelDialog):
             self.menus.tool,
             (
                 overview,
+                model_evaluation,
                 None,
                 save_crop,
                 None,
@@ -3489,6 +3497,10 @@ class LabelingWidget(LabelDialog):
     def overview(self):
         if self.filename:
             OverviewDialog(parent=self)
+
+    def open_model_evaluation(self):
+        dialog = ModelEvaluationDialog(self)
+        dialog.exec_()
 
     def digit_shortcut_manager(self):
         digit_shortcut_dialog = DigitShortcutDialog(parent=self)
